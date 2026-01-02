@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Jadual Waktu - ASG Ver 1.0</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* Logik Tab Navigation */
+        .section { display: none; } 
+        .section.active { display: block; }
+        
+        .tab-btn.active { 
+            background-color: var(--primary-color); 
+            color: white; 
+            border-bottom: 3px solid #000;
+        }
+
+        /* Gaya Jadual Senarai (Guru/Subjek) */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            background: white;
+            font-size: 0.9rem;
+        }
+        .data-table th, .data-table td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+        .data-table th {
+            background-color: #f1f5f9;
+            color: #334155;
+        }
+        .btn-sm {
+            padding: 4px 8px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            border-radius: 4px;
+            border: none;
+            margin-right: 5px;
+        }
+        .btn-edit { background: #3b82f6; color: white; }
+        .btn-delete { background: #ef4444; color: white; }
+
+        /* Gaya Khusus Untuk Cetakan (Print) */
+        @media print {
+            header, .tabs, .form-card, .form-row, button, hr, h3, h4, #auth-section, .data-table {
+                display: none !important;
+            }
+            body { background-color: white; padding: 0; }
+            .container {
+                width: 100% !important;
+                max-width: none !important;
+                box-shadow: none !important;
+                border: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            #timetableContainer { margin-top: 0 !important; }
+            .timetable-wrapper { page-break-after: always; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="auth-section">
+        <div class="auth-card" style="max-width: 400px; margin: 80px auto; padding: 30px; border: 1px solid #ddd; border-radius: 12px; text-align: center; background: white; box-shadow: var(--shadow);">
+            <img src="asg.png" alt="Logo" style="width: 80px; margin-bottom: 15px;">
+            <h2 style="margin-bottom: 5px;">Automatic Schedule Generator</h2>
+            <p style="color: var(--text-muted); margin-bottom: 25px;">Sila Log Masuk</p>
+            <input type="email" id="loginEmail" placeholder="Alamat Emel" style="width: 100%; margin-bottom: 15px; padding: 12px; border: 1px solid #ddd; border-radius: 6px;">
+            <input type="password" id="loginPassword" placeholder="Kata Laluan" style="width: 100%; margin-bottom: 20px; padding: 12px; border: 1px solid #ddd; border-radius: 6px;">
+            <button id="btnLogin" class="btn-primary" style="width: 100%; padding: 12px; font-weight: bold;">MASUK</button>
+            <p id="auth-error" style="color: var(--danger-color); margin-top: 15px; font-size: 0.9rem;"></p>
+        </div>
+    </div>
+
+    <div class="container" id="app-container" style="display: none;">
+        
+        <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; border-bottom: 2px solid #eee; padding-bottom: 15px;">
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <img src="asg.png" alt="Logo" style="width: 55px;">
+                <div style="display: flex; flex-direction: column;">
+                    <h1 style="margin: 0; font-size: 1.6rem;">ASG Ver 1.0</h1>
+                    <p style="margin: 0; font-size: 0.95rem; color: var(--text-muted);">Sistem Pengurusan Jadual Waktu</p>
+                </div>
+            </div>
+            <button id="btnLogout" class="btn-outline-danger" style="padding: 8px 15px;">Log Keluar</button>
+        </header>
+
+        <div class="tabs" style="margin-bottom: 25px; display: flex; gap: 8px;">
+            <button class="tab-btn active" onclick="switchTab('tab-daftar')">1. DAFTAR DATA</button>
+            <button class="tab-btn" onclick="switchTab('tab-agihan')">2. AGIHAN TUGAS</button>
+            <button class="tab-btn" onclick="switchTab('tab-jana')">3. JANA & PAPAR</button>
+        </div>
+
+        <div id="tab-daftar" class="section active">
+            <h3 style="margin-bottom: 20px;">Pendaftaran Guru, Subjek & Kelas</h3>
+            
+            <div class="form-card" style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 25px;">
+                <h4 style="margin-top:0;">Daftar / Kemaskini Guru</h4>
+                <div class="form-row" style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    <input type="text" id="regTeacherId" placeholder="ID Guru (G01)" style="flex:1;">
+                    <input type="text" id="regTeacherName" placeholder="Nama Penuh Guru" style="flex:2;">
+                    <input type="text" id="regTeacherShort" placeholder="Singkatan (AZM)" style="flex:1;">
+                    <button class="btn-primary" id="btnSaveTeacher">Simpan</button>
+                </div>
+                <div id="teacherTableContainer"></div>
+            </div>
+
+            <div class="form-card" style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 25px;">
+                <h4 style="margin-top:0;">Daftar / Kemaskini Subjek</h4>
+                <div class="form-row" style="display: grid; grid-template-columns: 1fr 2fr 1fr auto auto; gap: 10px; align-items: center; margin-bottom: 15px;">
+                    <input type="text" id="regSubId" placeholder="ID (BM)">
+                    <input type="text" id="regSubName" placeholder="Nama Subjek">
+                    <input type="number" id="regSubSlots" placeholder="Slot">
+                    <label><input type="checkbox" id="regSubDouble"> Berkembar?</label>
+                    <button class="btn-primary" id="btnSaveSubject">Simpan</button>
+                </div>
+                <div id="subjectTableContainer"></div>
+            </div>
+
+            <div class="form-card" style="background: #f8fafc; padding: 20px; border-radius: 8px;">
+                <h4 style="margin-top:0;">Daftar Kelas</h4>
+                <div class="form-row" style="display: flex; gap: 10px;">
+                    <input type="text" id="regClassId" placeholder="ID Kelas (1A)">
+                    <input type="text" id="regClassName" placeholder="Nama Kelas" style="flex:1;">
+                    <button class="btn-primary" id="btnSaveClass">Simpan</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-agihan" class="section">
+            <h3 style="margin-bottom: 20px;">Agihan Tugasan Guru</h3>
+            <div class="form-card" style="background: #f8fafc; padding: 20px; border-radius: 8px;">
+                <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr 1fr 100px; gap: 10px; margin-bottom: 15px;">
+                    <select id="selectTeacher"><option value="">Pilih Guru</option></select>
+                    <select id="selectClass"><option value="">Pilih Kelas</option></select>
+                    <select id="selectSubject"><option value="">Pilih Subjek</option></select>
+                    <input type="number" id="inputSlots" placeholder="Slot">
+                </div>
+                <button class="btn-primary" id="btnAddLocal" style="width: 100%; margin-bottom: 20px;">+ Tambah ke Draf Agihan</button>
+                <h4 style="border-top: 1px solid #ddd; padding-top: 15px;">Senarai Draf</h4>
+                <ul id="localListUI" style="list-style: none; padding: 0; max-height: 200px; overflow-y: auto; background: white; border: 1px solid #eee;"></ul>
+                <button class="btn-success" id="btnSyncCloud" style="width: 100%; margin-top: 15px; padding: 15px;">💾 SIMPAN SEMUA KE CLOUD</button>
+            </div>
+        </div>
+
+        <div id="tab-jana" class="section">
+            <div style="background: #fff4e5; padding: 20px; border-radius: 8px; margin-bottom: 25px; text-align: center; border: 1px solid #ffd5a1;">
+                <h3>Penjanaan Automatik</h3>
+                <button class="btn-warning" id="btnGenerate" style="width: 100%; max-width: 400px; padding: 15px; font-weight: bold;">⚡ JANA JADUAL SEKARANG</button>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0;">
+
+            <h3>Paparan & Cetakan</h3>
+            <div class="form-row" style="display: flex; gap: 10px; background: #f1f5f9; padding: 15px; border-radius: 8px;">
+                <select id="viewClassSelect" style="flex: 2;">
+                    <option value="">-- Pilih Kelas --</option>
+                    <option value="ALL" style="font-weight: bold; color: var(--primary-color);">[ SEMUA KELAS ]</option>
+                </select>
+                <button class="btn-primary" id="btnViewJadual" style="flex: 1;">Lihat</button>
+                <button class="btn-success" id="btnSaveManual" style="flex: 1;">Simpan Manual</button>
+                <button class="btn-outline-primary" id="btnPrintJadual" style="flex: 1;">🖨️ Cetak</button>
+            </div>
+
+            <div id="timetableContainer" style="margin-top: 25px;"></div>
+        </div>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+    <script>
+        function switchTab(tabId) {
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            const targetSection = document.getElementById(tabId);
+            if(targetSection) targetSection.classList.add('active');
+            if(event && event.currentTarget) event.currentTarget.classList.add('active');
+        }
+    </script>
+</body>
+</html>
