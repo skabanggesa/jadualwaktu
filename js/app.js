@@ -200,14 +200,19 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     days.forEach(day => {
         const slotsToReplace = [];
         
-        // Cari kelas-kelas yang ada guru ini pada hari tersebut
+// Cari kelas-kelas yang ada guru ini pada hari tersebut
         Object.keys(allTimetables).forEach(classId => {
             const dayData = allTimetables[classId][day];
             if (dayData && Array.isArray(dayData)) {
                 dayData.forEach((slot, index) => {
-                console.log("Contoh struktur slot di DB:", slot); 
+                    
+                    // 1. LOG UNTUK PENYIASATAN (Hanya log jika slot ada data)
+                    if (slot) {
+                        console.log("DITEMUI SLOT:", slot); 
+                        console.log("ID Dicari:", absentTeacherId);
                     }
-                                
+
+                    // 2. LOGIK PERBANDINGAN
                     if (slot && slot.teacherId === absentTeacherId) {
                         slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
                         totalSlotsToReplace++;
@@ -303,4 +308,5 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     });
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
+
 
