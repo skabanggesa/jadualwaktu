@@ -106,7 +106,7 @@ window.editTeacher = (id, name, short) => {
     document.getElementById('regTeacherId').value = id;
     document.getElementById('regTeacherName').value = name;
     document.getElementById('regTeacherShort').value = short || "";
-    document.getElementById('regTeacherId').readOnly = true; // Elakkan tukar ID semasa edit
+    document.getElementById('regTeacherId').readOnly = true; 
 };
 
 window.editSubject = (id, name, slots, isDouble) => {
@@ -209,6 +209,7 @@ function populateDropdowns() {
     fill('selectSubject', subjectsList, "Subjek");
     fill('selectClass', classesList, "Kelas");
     fill('viewClassSelect', classesList, "Kelas");
+    fill('absentTeacherSelect', teachersList, "Guru"); // Untuk Tab Relief
 }
 
 // --- E. AGIHAN TUGAS ---
@@ -282,3 +283,142 @@ document.getElementById('btnSaveManual').onclick = async () => {
     await setDoc(doc(db, "timetables", classId), data);
     alert("Disimpan manual!");
 };
+
+
+// --- G. GURU GANTI (RELIEF) - MESRA GURU ---
+
+document.getElementById('btnIdentifyRelief').onclick = async () => {
+    const absentTeacherId = document.getElementById('absentTeacherSelect').value;
+    if (!absentTeacherId) return alert("Pilih guru yang tidak hadir.");
+
+    const resultArea = document.getElementById('reliefResultArea');
+    resultArea.innerHTML = "<p>Sedang memproses data relief...</p>";
+
+    // 1. Ambil data jadual semua kelas dari Firestore
+    const snap = await getDocs(collection(db, "timetables"));
+    const allTimetables = {};
+    snap.forEach(doc => { allTimetables[doc.id] = doc.data(); });
+
+    // 2. Petakan jadual mengikut guru (Teacher-Centric Schedule)
+    const teacherSchedules = mapSchedulesByTeacher(allTimetables);
+
+    // 3. Kenalpasti slot yang perlu diganti (Slot di mana guru absent mengajar)
+    const days = ["ISNIN", "SELASA", "RABU", "KHAMIS", "JUMAAT"];
+    let html = `<div class="relief-print-wrapper">
+                <h3 style="text-align:center; border-bottom:2px solid #333; padding-bottom:10px;">
+                    CADANGAN GURU GANTI: ${teachersList.find(t => t.id === absentTeacherId).name}
+                </h3>`;
+
+    days.forEach(day => {
+        const slotsToReplace = [];
+        // Cari kelas mana yang guru ini mengajar pada hari tersebut
+        Object.keys(allTimetables).forEach(classId => {
+            const dayData = allTimetables[classId][day];
+            if (dayData) {
+                dayData.forEach((slot, index) => {
+                    if (slot && slot.teacherId === absentTeacherId) {
+                        slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
+                    }
+                });
+            }
+        });
+
+        if (slotsToReplace.length > 0) {
+            html += `<h4 style="background:#e2e8f0; padding:8px; margin-top:20px;">HARI: ${day}</h4>
+                     <table class="data-table">
+                        <tr>
+                            <th width="15%">Waktu / Slot</th>
+                            <th width="15%">Kelas</th>
+                            <th width="70%">Cadangan Guru Ganti (Paling Layak Di Atas)</th>
+                        </tr>`;
+
+            slotsToReplace.sort((a,b) => a.slotIndex - b.slotIndex).forEach(item => {
+                const candidates = findEligibleRelief(item.slotIndex, day, teacherSchedules);
+                
+                html += `<tr>
+                    <td>Slot ${item.slotIndex + 1}</td>
+                    <td><b>${item.classId}</b><br><small>${item.subject}</small></td>
+                    <td>`;
+                
+                if (candidates.length === 0) {
+                    html += `<span style="color:red;">Tiada guru kosong.</span>`;
+                } else {
+                    candidates.forEach(c => {
+                        const statusClass = c.isEligible ? 'status-eligible' : 'status-rest';
+                        const statusLabel = c.isEligible ? 'LAYAK' : 'REHAT WAJIB';
+                        html += `<div style="margin-bottom:5px; border-bottom:1px solid #f1f1f1; padding-bottom:2px;">
+                                    <span class="status-badge ${statusClass}">${statusLabel}</span> 
+                                    <b>${c.name}</b> <small style="color:#666;">(${c.reason})</small>
+                                 </div>`;
+                    });
+                }
+                html += `</td></tr>`;
+            });
+            html += `</table>`;
+        }
+    });
+
+    html += `</div><button class="btn-outline-primary" onclick="window.print()" style="margin-top:20px; width:100%;">Cetak Senarai Relief</button>`;
+    resultArea.innerHTML = html;
+};
+
+/**
+ * Membina objek jadual untuk setiap guru
+ */
+function mapSchedulesByTeacher(allTimetables) {
+    const map = {};
+    teachersList.forEach(t => { 
+        map[t.id] = { "ISNIN":[], "SELASA":[], "RABU":[], "KHAMIS":[], "JUMAAT":[] }; 
+        // Inisialisasi slot kosong (null)
+        for(let d in map[t.id]) { for(let i=0; i<12; i++) map[t.id][d][i] = null; }
+    });
+
+    Object.keys(allTimetables).forEach(classId => {
+        const classTable = allTimetables[classId];
+        Object.keys(classTable).forEach(day => {
+            classTable[day].forEach((slot, idx) => {
+                if (slot && map[slot.teacherId]) {
+                    map[slot.teacherId][day][idx] = { classId, subjectId: slot.subjectId };
+                }
+            });
+        });
+    });
+    return map;
+}
+
+/**
+ * Logik Mesra Guru: Cari siapa yang layak
+ */
+function findEligibleRelief(slotIdx, day, teacherSchedules) {
+    let results = [];
+
+    teachersList.forEach(t => {
+        const schedule = teacherSchedules[t.id][day];
+        
+        // 1. Cek jika sedang mengajar kelas sendiri
+        if (schedule[slotIdx] !== null) return; 
+
+        // 2. Cek Logik Mesra Guru: 2 Sesi Berturut-turut
+        let isEligible = true;
+        let reason = "Masa Kosong";
+
+        if (slotIdx >= 2) {
+            const s1 = schedule[slotIdx - 1];
+            const s2 = schedule[slotIdx - 2];
+            if (s1 !== null && s2 !== null) {
+                isEligible = false;
+                reason = `Penat: Baru selesai kelas ${s2.classId} & ${s1.classId}`;
+            }
+        }
+
+        results.push({
+            id: t.id,
+            name: t.name,
+            isEligible: isEligible,
+            reason: reason
+        });
+    });
+
+    // Susun: Layak di atas
+    return results.sort((a, b) => b.isEligible - a.isEligible);
+}
