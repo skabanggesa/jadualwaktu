@@ -44,6 +44,17 @@
         .btn-edit { background: #3b82f6; color: white; }
         .btn-delete { background: #ef4444; color: white; }
 
+        /* Status Label dalam Jadual Relief (Mesra Guru) */
+        .status-badge {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            display: inline-block;
+        }
+        .status-eligible { background: #dcfce7; color: #166534; }
+        .status-rest { background: #fee2e2; color: #991b1b; }
+
         /* Gaya Khusus Untuk Cetakan (Print) */
         @media print {
             header, .tabs, .form-card, .form-row, button, hr, h3, h4, #auth-section, .data-table {
@@ -58,8 +69,8 @@
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            #timetableContainer { margin-top: 0 !important; }
-            .timetable-wrapper { page-break-after: always; }
+            #timetableContainer, #reliefResultArea { margin-top: 0 !important; }
+            .timetable-wrapper, .relief-print-wrapper { page-break-after: always; }
         }
     </style>
 </head>
@@ -90,10 +101,11 @@
             <button id="btnLogout" class="btn-outline-danger" style="padding: 8px 15px;">Log Keluar</button>
         </header>
 
-        <div class="tabs" style="margin-bottom: 25px; display: flex; gap: 8px;">
+        <div class="tabs" style="margin-bottom: 25px; display: flex; gap: 8px; overflow-x: auto; padding-bottom: 5px;">
             <button class="tab-btn active" onclick="switchTab('tab-daftar')">1. DAFTAR DATA</button>
             <button class="tab-btn" onclick="switchTab('tab-agihan')">2. AGIHAN TUGAS</button>
             <button class="tab-btn" onclick="switchTab('tab-jana')">3. JANA & PAPAR</button>
+            <button class="tab-btn" onclick="switchTab('tab-relief')">4. GURU GANTI (RELIEF)</button>
         </div>
 
         <div id="tab-daftar" class="section active">
@@ -169,6 +181,26 @@
 
             <div id="timetableContainer" style="margin-top: 25px;"></div>
         </div>
+
+        <div id="tab-relief" class="section">
+            <h3 style="margin-bottom: 20px;">Pengurusan Guru Ganti (Relief)</h3>
+            
+            <div class="form-card" style="background: #f0fdf4; padding: 20px; border-radius: 8px; border: 1px solid #bbf7d0; margin-bottom: 25px;">
+                <p style="margin-top: 0; font-size: 0.9rem; color: #166534;">* Sistem akan mencari guru yang mempunyai masa kosong dan <b>tidak</b> sedang dalam fasa rehat wajib (selepas 2 sesi berturut-turut).</p>
+                <div class="form-row" style="display: flex; gap: 10px;">
+                    <select id="absentTeacherSelect" style="flex: 2;">
+                        <option value="">-- Pilih Guru Yang Tidak Hadir --</option>
+                    </select>
+                    <button class="btn-primary" id="btnIdentifyRelief" style="flex: 1;">Cari Guru Ganti</button>
+                </div>
+            </div>
+
+            <div id="reliefResultArea">
+                <div style="text-align: center; color: #94a3b8; padding: 40px; border: 2px dashed #e2e8f0; border-radius: 8px;">
+                    Pilih guru di atas untuk menjana cadangan relief.
+                </div>
+            </div>
+        </div>
     </div>
 
     <script type="module" src="js/app.js"></script>
@@ -176,9 +208,19 @@
         function switchTab(tabId) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            
             const targetSection = document.getElementById(tabId);
-            if(targetSection) targetSection.classList.add('active');
-            if(event && event.currentTarget) event.currentTarget.classList.add('active');
+            if(targetSection) {
+                targetSection.classList.add('active');
+            }
+
+            // Mencari butang yang diklik berdasarkan tabId
+            const buttons = document.querySelectorAll('.tab-btn');
+            buttons.forEach(btn => {
+                if(btn.getAttribute('onclick').includes(tabId)) {
+                    btn.classList.add('active');
+                }
+            });
         }
     </script>
 </body>
