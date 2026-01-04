@@ -307,24 +307,32 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
 
     let totalSlotsFound = 0;
 
-    days.forEach(day => {
+days.forEach(day => {
         const slotsToReplace = [];
         Object.keys(allTimetables).forEach(classId => {
-            const dayData = allTimetables[classId][day]; // Akan mencari "Isnin", "Selasa" dsb.
+            const dayData = allTimetables[classId][day];
+            
             if (dayData && Array.isArray(dayData)) {
                 dayData.forEach((slot, index) => {
-                    if (slot) console.log(`Semak: ${day}, Guru di DB: [${slot.teacherId}], Guru Dicari: [${absentTeacherId}]`);
-                    
-                    if (slot && slot.teacherId === absentTeacherId) {
-                        slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
-                    if (slot && slot.teacherId === absentTeacherId) {
-                        slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
-                        totalSlotsFound++;
+                    // 1. Debugging: Tengok perbandingan ID di Console
+                    if (slot) {
+                        console.log(`Semak: ${day}, Guru di DB: [${slot.teacherId}], Guru Dicari: [${absentTeacherId}]`);
                     }
-                });
+                    
+                    // 2. Logik Carian: Simpan slot jika ID sepadan
+                    if (slot && slot.teacherId === absentTeacherId) {
+                        slotsToReplace.push({ 
+                            slotIndex: index, 
+                            classId: classId, 
+                            subject: slot.subjectId 
+                        });
+                        totalSlotsFound++; // Pastikan let totalSlotsFound = 0; ada di atas days.forEach
+                    }
+                }); // Tutup dayData.forEach
             }
-        });
+        }); // Tutup Object.keys.forEach
 
+        // Sambungan bina HTML untuk hari tersebut
         if (slotsToReplace.length > 0) {
             html += `<h4 style="background:#e2e8f0; padding:8px; margin-top:20px;">HARI: ${day.toUpperCase()}</h4>
                      <table class="data-table">
@@ -358,7 +366,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
             });
             html += `</table>`;
         }
-    });
+    }); // Tutup days.forEach
 
     if (totalSlotsFound === 0) {
         html += `<p style="text-align:center; color:orange; padding:20px;">Tiada slot mengajar ditemui untuk guru ini pada hari-hari tersebut.</p>`;
@@ -441,6 +449,7 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
 
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
+
 
 
 
