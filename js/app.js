@@ -76,7 +76,6 @@ if (btnLogout) {
 
 // --- C. PENGURUSAN DATA MASTER (CRUD) ---
 
-// 1. Simpan Data (Create/Update)
 async function saveMasterData(col, id, data) {
     const cleanId = clean(id);
     try {
@@ -88,7 +87,6 @@ async function saveMasterData(col, id, data) {
     }
 }
 
-// 2. Padam Data (Delete)
 window.deleteRecord = async (col, id) => {
     if (confirm(`Padam rekod ${id}?`)) {
         try {
@@ -101,7 +99,6 @@ window.deleteRecord = async (col, id) => {
     }
 };
 
-// 3. Kemaskini (Edit - Isi semula borang)
 window.editTeacher = (id, name, short) => {
     document.getElementById('regTeacherId').value = id;
     document.getElementById('regTeacherName').value = name;
@@ -117,7 +114,6 @@ window.editSubject = (id, name, slots, isDouble) => {
     document.getElementById('regSubId').readOnly = true;
 };
 
-// Event Listeners Simpan
 document.getElementById('btnSaveTeacher').onclick = () => {
     const id = document.getElementById('regTeacherId').value;
     const name = document.getElementById('regTeacherName').value;
@@ -209,7 +205,7 @@ function populateDropdowns() {
     fill('selectSubject', subjectsList, "Subjek");
     fill('selectClass', classesList, "Kelas");
     fill('viewClassSelect', classesList, "Kelas");
-    fill('absentTeacherSelect', teachersList, "Guru"); // Untuk Tab Relief
+    fill('absentTeacherSelect', teachersList, "Guru");
 }
 
 // --- E. AGIHAN TUGAS ---
@@ -294,27 +290,23 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     const resultArea = document.getElementById('reliefResultArea');
     resultArea.innerHTML = "<p>Sedang memproses data relief...</p>";
 
-    // 1. Ambil data jadual semua kelas dari Firestore
     const snap = await getDocs(collection(db, "timetables"));
     const allTimetables = {};
     snap.forEach(doc => { allTimetables[doc.id] = doc.data(); });
 
-    // 2. Petakan jadual mengikut guru (Teacher-Centric Schedule)
     const teacherSchedules = mapSchedulesByTeacher(allTimetables);
 
-    // 3. Kenalpasti slot yang perlu diganti (Slot di mana guru absent mengajar)
     const days = ["ISNIN", "SELASA", "RABU", "KHAMIS", "JUMAAT"];
     let html = `<div class="relief-print-wrapper">
                 <h3 style="text-align:center; border-bottom:2px solid #333; padding-bottom:10px;">
-                    CADANGAN GURU GANTI: ${teachersList.find(t => t.id === absentTeacherId).name}
+                    CADANGAN GURU GANTI: ${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}
                 </h3>`;
 
     days.forEach(day => {
         const slotsToReplace = [];
-        // Cari kelas mana yang guru ini mengajar pada hari tersebut
         Object.keys(allTimetables).forEach(classId => {
             const dayData = allTimetables[classId][day];
-            if (dayData) {
+            if (Array.isArray(dayData)) {
                 dayData.forEach((slot, index) => {
                     if (slot && slot.teacherId === absentTeacherId) {
                         slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
@@ -367,72 +359,58 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
  */
 function mapSchedulesByTeacher(allTimetables) {
     const map = {};
+    
+    // Inisialisasi map untuk semua guru
     teachersList.forEach(t => { 
         map[t.id] = { "ISNIN":[], "SELASA":[], "RABU":[], "KHAMIS":[], "JUMAAT":[] }; 
-        // Inisialisasi slot kosong (null)
-        for(let d in map[t.id]) { for(let i=0; i<12; i++) map[t.id][d][i] = null; }
-    });
-
-// --- BAGIAN 1: Pemetaan Jadwal ---
-// Pastikan blok ini berada di dalam sebuah fungsi, misal: function mapSchedulesByTeacher() { ... }
-Object.keys(allTimetables).forEach(classId => {
-    const classTable = allTimetables[classId];
-    
-    Object.keys(classTable).forEach(day => {
-        // Cek apakah ini benar-benar data hari (Array)
-        if (Array.isArray(classTable[day])) {
-            classTable[day].forEach((slot, idx) => {
-                // Pastikan slot tidak null dan ID guru terdaftar di map
-                if (slot && slot.teacherId && map[slot.teacherId]) {
-                    
-                    // Inisialisasi hari di map guru jika belum ada
-                    if (!map[slot.teacherId][day]) {
-                        map[slot.teacherId][day] = []; 
-                    }
-                    
-                    map[slot.teacherId][day][idx] = { 
-                        classId: classId, 
-                        subjectId: slot.subjectId 
-                    };
-                }
-            });
+        for(let d in map[t.id]) { 
+            for(let i=0; i<12; i++) map[t.id][d][i] = null; 
         }
     });
-}); // Tutup forEach allTimetables
 
+    // Isi map berdasarkan jadual kelas
+    Object.keys(allTimetables).forEach(classId => {
+        const classTable = allTimetables[classId];
+        Object.keys(classTable).forEach(day => {
+            if (Array.isArray(classTable[day])) {
+                classTable[day].forEach((slot, idx) => {
+                    if (slot && slot.teacherId && map[slot.teacherId]) {
+                        map[slot.teacherId][day][idx] = { 
+                            classId: classId, 
+                            subjectId: slot.subjectId 
+                        };
+                    }
+                });
+            }
+        });
+    });
+
+    return map; 
+}
 
 /**
- * --- BAGIAN 2: Logik Mesra Guru ---
- * Cari siapa yang layak untuk relief
+ * Logik Mesra Guru: Cari siapa yang layak untuk relief
  */
 function findEligibleRelief(slotIdx, day, teacherSchedules) {
     let results = [];
 
-    // Pastikan teachersList sudah terdefinisi di scope global/atas
     teachersList.forEach(t => {
-        // Safety Check: Pastikan data jadwal guru dan hari tersebut ada
         const teacherData = teacherSchedules[t.id];
-        if (!teacherData || !teacherData[day]) {
-            return; // Lewati jika guru tidak punya jadwal sama sekali
-        }
+        if (!teacherData || !teacherData[day]) return;
 
         const schedule = teacherData[day];
         
-        // 1. Cek jika sedang mengajar kelas sendiri (slot tidak null)
-        if (schedule[slotIdx] !== null && schedule[slotIdx] !== undefined) {
-            return; 
-        }
+        // 1. Cek jika guru sedang mengajar (Slot mestilah null/kosong untuk layak relief)
+        if (schedule[slotIdx] !== null && schedule[slotIdx] !== undefined) return; 
 
-        // 2. Cek Logik Mesra Guru: 2 Sesi Berturut-turut
+        // 2. Logik Mesra Guru: Elakkan guru yang baru habis 2 sesi berturut-turut
         let isEligible = true;
         let reason = "Masa Kosong";
 
-        // Cek dua jam ke belakang (slotIdx-1 dan slotIdx-2)
         if (slotIdx >= 2) {
             const s1 = schedule[slotIdx - 1];
             const s2 = schedule[slotIdx - 2];
             
-            // Jika dua slot sebelumnya TIDAK null (artinya guru sedang mengajar)
             if (s1 && s2) {
                 isEligible = false;
                 reason = `Penat: Baru selesai kelas ${s2.classId} & ${s1.classId}`;
@@ -447,7 +425,5 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
         });
     });
 
-    // Susun: Yang layak (true) berada di urutan atas
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
-
