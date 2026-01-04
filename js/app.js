@@ -296,7 +296,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
 
     const teacherSchedules = mapSchedulesByTeacher(allTimetables);
 
-    const days = ["ISNIN", "SELASA", "RABU", "KHAMIS", "JUMAAT"];
+    const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
     let html = `<div class="relief-print-wrapper">
                 <h3 style="text-align:center; border-bottom:2px solid #333; padding-bottom:10px;">
                     CADANGAN GURU GANTI: ${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}
@@ -362,7 +362,7 @@ function mapSchedulesByTeacher(allTimetables) {
     
     // Inisialisasi map untuk semua guru
     teachersList.forEach(t => { 
-        map[t.id] = { "ISNIN":[], "SELASA":[], "RABU":[], "KHAMIS":[], "JUMAAT":[] }; 
+        map[t.id] = { "Isnin":[], "Selasa":[], "Rabu":[], "Khamis":[], "Jumaat":[] }; 
         for(let d in map[t.id]) { 
             for(let i=0; i<12; i++) map[t.id][d][i] = null; 
         }
@@ -427,3 +427,4 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
 
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
+
