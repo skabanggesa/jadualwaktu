@@ -313,6 +313,10 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
             const dayData = allTimetables[classId][day]; // Akan mencari "Isnin", "Selasa" dsb.
             if (dayData && Array.isArray(dayData)) {
                 dayData.forEach((slot, index) => {
+                    if (slot) console.log(`Semak: ${day}, Guru di DB: [${slot.teacherId}], Guru Dicari: [${absentTeacherId}]`);
+                    
+                    if (slot && slot.teacherId === absentTeacherId) {
+                        slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
                     if (slot && slot.teacherId === absentTeacherId) {
                         slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
                         totalSlotsFound++;
@@ -437,5 +441,6 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
 
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
+
 
 
