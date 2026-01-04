@@ -201,20 +201,25 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         const slotsToReplace = [];
         
 // Cari kelas-kelas yang ada guru ini pada hari tersebut
-        Object.keys(allTimetables).forEach(classId => {
+Object.keys(allTimetables).forEach(classId => {
             const dayData = allTimetables[classId][day];
+            
             if (dayData && Array.isArray(dayData)) {
                 dayData.forEach((slot, index) => {
-                    
-                    // 1. LOG UNTUK PENYIASATAN (Hanya log jika slot ada data)
+                    // Kod Penyiasat: Log ini akan tunjuk apa sebenarnya dalam Firestore
                     if (slot) {
-                        console.log("DITEMUI SLOT:", slot); 
-                        console.log("ID Dicari:", absentTeacherId);
+                        console.log(`🔎 DATA DB -> Kelas: ${classId}, Hari: ${day}, Slot: ${index}`);
+                        console.log(`   Isi Slot:`, slot); 
+                        console.log(`   ID Guru Dicari: "${absentTeacherId}"`);
                     }
 
-                    // 2. LOGIK PERBANDINGAN
-                    if (slot && slot.teacherId === absentTeacherId) {
-                        slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
+                    // Logik perbandingan (Sistem akan cuba cari teacherId atau teacher)
+                    if (slot && (slot.teacherId === absentTeacherId || slot.teacher === absentTeacherId)) {
+                        slotsToReplace.push({ 
+                            slotIndex: index, 
+                            classId: classId, 
+                            subject: slot.subjectId || slot.subject 
+                        });
                         totalSlotsToReplace++;
                     }
                 });
@@ -308,5 +313,6 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     });
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
+
 
 
