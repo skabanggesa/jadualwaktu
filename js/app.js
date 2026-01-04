@@ -373,18 +373,22 @@ function mapSchedulesByTeacher(allTimetables) {
         for(let d in map[t.id]) { for(let i=0; i<12; i++) map[t.id][d][i] = null; }
     });
 
-    Object.keys(allTimetables).forEach(classId => {
-        const classTable = allTimetables[classId];
-        Object.keys(classTable).forEach(day => {
+Object.keys(allTimetables).forEach(classId => {
+    const classTable = allTimetables[classId];
+    Object.keys(classTable).forEach(day => {
+        // CEK DI SINI: Hanya jalankan jika datanya adalah Array
+        if (Array.isArray(classTable[day])) {
             classTable[day].forEach((slot, idx) => {
                 if (slot && map[slot.teacherId]) {
+                    // Pastikan map[slot.teacherId][day] juga sudah terinisialisasi sebagai array/objek
+                    if (!map[slot.teacherId][day]) map[slot.teacherId][day] = {}; 
+                    
                     map[slot.teacherId][day][idx] = { classId, subjectId: slot.subjectId };
                 }
             });
-        });
+        }
     });
-    return map;
-}
+});
 
 /**
  * Logik Mesra Guru: Cari siapa yang layak
@@ -422,3 +426,4 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     // Susun: Layak di atas
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
+
