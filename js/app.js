@@ -426,4 +426,3 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     // Susun: Layak di atas
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
-
