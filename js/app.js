@@ -178,17 +178,14 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     const resultArea = document.getElementById('reliefResultArea');
     resultArea.innerHTML = "<p>⏳ Sedang memproses data relief...</p>";
 
-    // 1. Tarik Data Jadual Semua Kelas
     const snap = await getDocs(collection(db, "timetables"));
     const allTimetables = {};
     snap.forEach(doc => { allTimetables[doc.id] = doc.data(); });
     
     console.log("Data Timetables dimuatkan:", Object.keys(allTimetables).length, "kelas found.");
 
-    // 2. Petakan Jadual mengikut Guru
     const teacherSchedules = mapSchedulesByTeacher(allTimetables);
 
-    // 3. Proses Carian Slot (Nama hari mesti Title Case: Isnin, Selasa, dsb)
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
     let html = `<div class="relief-print-wrapper">
                 <h3 style="text-align:center; border-bottom:2px solid #333; padding-bottom:10px;">
@@ -200,20 +197,15 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     days.forEach(day => {
         const slotsToReplace = [];
         
-// Cari kelas-kelas yang ada guru ini pada hari tersebut
-Object.keys(allTimetables).forEach(classId => {
+        Object.keys(allTimetables).forEach(classId => {
             const dayData = allTimetables[classId][day];
             
-            if (dayData && Array.isArray(dayData)) {
-                dayData.forEach((slot, index) => {
-                    // Kod Penyiasat: Log ini akan tunjuk apa sebenarnya dalam Firestore
-                    if (slot) {
-                        console.log(`🔎 DATA DB -> Kelas: ${classId}, Hari: ${day}, Slot: ${index}`);
-                        console.log(`   Isi Slot:`, slot); 
-                        console.log(`   ID Guru Dicari: "${absentTeacherId}"`);
-                    }
+            // DIBETULKAN: Gunakan Object.keys kerana data Isnin/Selasa di DB adalah Object, bukan Array
+            if (dayData && typeof dayData === 'object') {
+                Object.keys(dayData).forEach(slotKey => {
+                    const slot = dayData[slotKey];
+                    const index = parseInt(slotKey) - 1; // Slot 1 jadi index 0
 
-                    // Logik perbandingan (Sistem akan cuba cari teacherId atau teacher)
                     if (slot && (slot.teacherId === absentTeacherId || slot.teacher === absentTeacherId)) {
                         slotsToReplace.push({ 
                             slotIndex: index, 
@@ -266,8 +258,7 @@ Object.keys(allTimetables).forEach(classId => {
         html += `<p style="text-align:center; padding:20px; color:orange;">Tiada slot mengajar ditemui untuk guru ini dalam pangkalan data.</p>`;
     }
 
-    html += `</div>`;
-    resultArea.innerHTML = html;
+    resultArea.innerHTML = html + `</div>`;
 };
 
 // --- G. HELPER FUNCTIONS ---
@@ -284,10 +275,14 @@ function mapSchedulesByTeacher(allTimetables) {
     Object.keys(allTimetables).forEach(classId => {
         const classTable = allTimetables[classId];
         Object.keys(classTable).forEach(day => {
-            if (Array.isArray(classTable[day])) {
-                classTable[day].forEach((slot, idx) => {
-                    if (slot && slot.teacherId && map[slot.teacherId] && map[slot.teacherId][day]) {
-                        map[slot.teacherId][day][idx] = { classId, subjectId: slot.subjectId };
+            const dayData = classTable[day];
+            // DIBETULKAN: Map data dari Object ke Array mengikut slotKey
+            if (dayData && typeof dayData === 'object') {
+                Object.keys(dayData).forEach(slotKey => {
+                    const slot = dayData[slotKey];
+                    const idx = parseInt(slotKey) - 1;
+                    if (slot && (slot.teacherId || slot.teacher) && map[slot.teacherId || slot.teacher] && map[slot.teacherId || slot.teacher][day]) {
+                        map[slot.teacherId || slot.teacher][day][idx] = { classId, subjectId: slot.subjectId || slot.subject };
                     }
                 });
             }
@@ -301,7 +296,7 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     teachersList.forEach(t => {
         const schedule = teacherSchedules[t.id]?.[day];
         if (!schedule) return;
-        if (schedule[slotIdx] !== null) return; // Sedang mengajar
+        if (schedule[slotIdx] !== null) return; 
 
         let isEligible = true;
         let reason = "Masa Kosong";
@@ -313,6 +308,3 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     });
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
-
-
-
