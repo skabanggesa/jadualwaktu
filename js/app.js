@@ -34,11 +34,9 @@ const clean = (str) => {
 };
 
 // --- B. PENGURUSAN AKSES & AUTHENTICATION ---
-
 onAuthStateChanged(auth, (user) => {
     const authSection = document.getElementById('auth-section');
     const appContainer = document.getElementById('app-container');
-
     if (user) {
         if (appContainer) appContainer.style.display = 'block';
         if (authSection) authSection.style.display = 'none';
@@ -49,79 +47,59 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-// Login
-const btnLogin = document.getElementById('btnLogin');
-if (btnLogin) {
-    btnLogin.onclick = async () => {
+// Login & Logout
+if (document.getElementById('btnLogin')) {
+    document.getElementById('btnLogin').onclick = async () => {
         const email = document.getElementById('loginEmail').value;
         const pass = document.getElementById('loginPassword').value;
-        try {
-            await signInWithEmailAndPassword(auth, email, pass);
-        } catch (error) {
-            alert("Akses ditolak: " + error.message);
-        }
+        try { await signInWithEmailAndPassword(auth, email, pass); } 
+        catch (error) { alert("Akses ditolak: " + error.message); }
+    };
+}
+if (document.getElementById('btnLogout')) {
+    document.getElementById('btnLogout').onclick = async () => {
+        if (confirm("Log keluar?")) { await signOut(auth); location.reload(); }
     };
 }
 
-// Logout
-const btnLogout = document.getElementById('btnLogout');
-if (btnLogout) {
-    btnLogout.onclick = async () => {
-        if (confirm("Log keluar?")) {
-            await signOut(auth);
-            location.reload(); 
-        }
-    };
+// --- C. PENGURUSAN DATA MASTER ---
+async function loadAllData() {
+    console.log("Memuatkan data dari Firestore...");
+    const [snapT, snapS, snapC] = await Promise.all([
+        getDocs(collection(db, "teachers")),
+        getDocs(collection(db, "subjects")),
+        getDocs(collection(db, "classes"))
+    ]);
+    teachersList = snapT.docs.map(d => ({ id: d.id, ...d.data() }));
+    subjectsList = snapS.docs.map(d => ({ id: d.id, ...d.data() }));
+    classesList = snapC.docs.map(d => ({ id: d.id, ...d.data() }));
+    populateDropdowns();
+    renderTeacherTable();
+    renderSubjectTable();
+    console.log("Data Guru Ditemui:", teachersList.length);
 }
-
-// --- C. PENGURUSAN DATA MASTER (CRUD) ---
 
 async function saveMasterData(col, id, data) {
-    const cleanId = clean(id);
     try {
-        await setDoc(doc(db, col, cleanId), data);
+        await setDoc(doc(db, col, clean(id)), data);
         alert(`Berjaya disimpan!`);
         loadAllData();
-    } catch (e) {
-        alert("Ralat simpan: " + e.message);
-    }
+    } catch (e) { alert("Ralat simpan: " + e.message); }
 }
 
 window.deleteRecord = async (col, id) => {
     if (confirm(`Padam rekod ${id}?`)) {
-        try {
-            await deleteDoc(doc(db, col, id));
-            alert("Rekod dipadam.");
-            loadAllData();
-        } catch (e) {
-            alert("Ralat padam: " + e.message);
-        }
+        await deleteDoc(doc(db, col, id));
+        loadAllData();
     }
 };
 
-window.editTeacher = (id, name, short) => {
-    document.getElementById('regTeacherId').value = id;
-    document.getElementById('regTeacherName').value = name;
-    document.getElementById('regTeacherShort').value = short || "";
-    document.getElementById('regTeacherId').readOnly = true; 
-};
-
-window.editSubject = (id, name, slots, isDouble) => {
-    document.getElementById('regSubId').value = id;
-    document.getElementById('regSubName').value = name;
-    document.getElementById('regSubSlots').value = slots;
-    document.getElementById('regSubDouble').checked = isDouble;
-    document.getElementById('regSubId').readOnly = true;
-};
-
+// Button Handlers for Master Data
 document.getElementById('btnSaveTeacher').onclick = () => {
     const id = document.getElementById('regTeacherId').value;
     const name = document.getElementById('regTeacherName').value;
     const short = document.getElementById('regTeacherShort').value.toUpperCase();
-    if(id && name && short) {
-        saveMasterData("teachers", id, { name, shortform: short });
-        document.getElementById('regTeacherId').readOnly = false;
-    } else alert("Lengkapkan data!");
+    if(id && name) saveMasterData("teachers", id, { name, shortform: short });
 };
 
 document.getElementById('btnSaveSubject').onclick = () => {
@@ -129,10 +107,7 @@ document.getElementById('btnSaveSubject').onclick = () => {
     const name = document.getElementById('regSubName').value;
     const slots = parseInt(document.getElementById('regSubSlots').value);
     const isDouble = document.getElementById('regSubDouble').checked;
-    if(id && name) {
-        saveMasterData("subjects", id, { name, slots, isDouble });
-        document.getElementById('regSubId').readOnly = false;
-    } else alert("Lengkapkan data!");
+    if(id && name) saveMasterData("subjects", id, { name, slots, isDouble });
 };
 
 document.getElementById('btnSaveClass').onclick = () => {
@@ -141,37 +116,13 @@ document.getElementById('btnSaveClass').onclick = () => {
     if(id && name) saveMasterData("classes", id, { name });
 };
 
-// --- D. PAPARAN JADUAL DATA (READ) ---
-
-async function loadAllData() {
-    const [snapT, snapS, snapC] = await Promise.all([
-        getDocs(collection(db, "teachers")),
-        getDocs(collection(db, "subjects")),
-        getDocs(collection(db, "classes"))
-    ]);
-    
-    teachersList = snapT.docs.map(d => ({ id: d.id, ...d.data() }));
-    subjectsList = snapS.docs.map(d => ({ id: d.id, ...d.data() }));
-    classesList = snapC.docs.map(d => ({ id: d.id, ...d.data() }));
-    
-    populateDropdowns();
-    renderTeacherTable();
-    renderSubjectTable();
-}
-
+// --- D. RENDER TABLES & DROPDOWNS ---
 function renderTeacherTable() {
     const container = document.getElementById('teacherTableContainer');
     let html = `<table class="data-table"><tr><th>ID</th><th>Nama</th><th>Singkatan</th><th>Tindakan</th></tr>`;
     teachersList.forEach(t => {
-        html += `<tr>
-            <td>${t.id}</td>
-            <td>${t.name}</td>
-            <td>${t.shortform || '-'}</td>
-            <td>
-                <button class="btn-sm btn-edit" onclick="editTeacher('${t.id}', '${t.name}', '${t.shortform || ''}')">Edit</button>
-                <button class="btn-sm btn-delete" onclick="deleteRecord('teachers', '${t.id}')">Padam</button>
-            </td>
-        </tr>`;
+        html += `<tr><td>${t.id}</td><td>${t.name}</td><td>${t.shortform || '-'}</td>
+        <td><button class="btn-sm btn-delete" onclick="deleteRecord('teachers', '${t.id}')">Padam</button></td></tr>`;
     });
     container.innerHTML = html + `</table>`;
 }
@@ -180,15 +131,8 @@ function renderSubjectTable() {
     const container = document.getElementById('subjectTableContainer');
     let html = `<table class="data-table"><tr><th>ID</th><th>Subjek</th><th>Slot</th><th>Tindakan</th></tr>`;
     subjectsList.forEach(s => {
-        html += `<tr>
-            <td>${s.id}</td>
-            <td>${s.name}</td>
-            <td>${s.slots} ${s.isDouble ? '(2)' : '(1)'}</td>
-            <td>
-                <button class="btn-sm btn-edit" onclick="editSubject('${s.id}', '${s.name}', ${s.slots}, ${s.isDouble})">Edit</button>
-                <button class="btn-sm btn-delete" onclick="deleteRecord('subjects', '${s.id}')">Padam</button>
-            </td>
-        </tr>`;
+        html += `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.slots} ${s.isDouble ? '(2)' : '(1)'}</td>
+        <td><button class="btn-sm btn-delete" onclick="deleteRecord('subjects', '${s.id}')">Padam</button></td></tr>`;
     });
     container.innerHTML = html + `</table>`;
 }
@@ -197,8 +141,7 @@ function populateDropdowns() {
     const fill = (elId, list, label) => {
         const el = document.getElementById(elId);
         if(!el) return;
-        const extra = elId === 'viewClassSelect' ? '<option value="ALL">[ SEMUA KELAS ]</option>' : '';
-        el.innerHTML = `<option value="">-- Pilih ${label} --</option>` + extra +
+        el.innerHTML = `<option value="">-- Pilih ${label} --</option>` +
             list.map(i => `<option value="${i.id}">${i.name || i.id}</option>`).join('');
     };
     fill('selectTeacher', teachersList, "Guru");
@@ -208,138 +151,75 @@ function populateDropdowns() {
     fill('absentTeacherSelect', teachersList, "Guru");
 }
 
-// --- E. AGIHAN TUGAS ---
-
-document.getElementById('btnAddLocal').onclick = () => {
-    const tId = document.getElementById('selectTeacher').value;
-    const cId = document.getElementById('selectClass').value;
-    const sId = document.getElementById('selectSubject').value;
-    const slots = parseInt(document.getElementById('inputSlots').value);
-    
-    if(!tId || !cId || !sId || isNaN(slots)) return alert("Isi semua!");
-
-    localAssignments.push({ teacherId: tId, classId: cId, subjectId: sId, totalSlots: slots });
-    renderLocalList();
-};
-
-function renderLocalList() {
-    const listUI = document.getElementById('localListUI');
-    listUI.innerHTML = localAssignments.map((a, i) => 
-        `<li style="padding:8px; border-bottom:1px solid #eee;">
-            ${a.classId} : ${a.subjectId} (${a.totalSlots} slot) 
-            <button onclick="window.delLocal(${i})" style="color:red; float:right;">Hapus</button>
-        </li>`
-    ).join('');
-}
-window.delLocal = (i) => { localAssignments.splice(i, 1); renderLocalList(); };
-
-document.getElementById('btnSyncCloud').onclick = async () => {
-    if(localAssignments.length === 0) return;
-    const batch = writeBatch(db);
-    localAssignments.forEach(a => {
-        const ref = doc(db, "assignments", clean(`${a.classId}_${a.subjectId}_${a.teacherId}`));
-        batch.set(ref, a);
-    });
-    await batch.commit();
-    alert("Berjaya Sync!");
-    localAssignments = [];
-    renderLocalList();
-};
-
-// --- F. JANA & PAPAR ---
-
-document.getElementById('btnGenerate').onclick = () => {
-    if(confirm("Jana jadual baru?")) startGenerating();
-};
+// --- E. GENERATE & VIEW JADUAL ---
+document.getElementById('btnGenerate').onclick = () => { if(confirm("Jana jadual baru?")) startGenerating(); };
 
 document.getElementById('btnViewJadual').onclick = async () => {
-    const container = document.getElementById('timetableContainer');
     const val = document.getElementById('viewClassSelect').value;
     if (!val) return;
-
-    container.innerHTML = ""; 
-    if (val === "ALL") {
-        for (const cls of classesList) {
-            const div = document.createElement('div');
-            div.innerHTML = `<h2 style="text-align:center; page-break-before:always;">KELAS: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
-            container.appendChild(div);
-            await renderTimetableGrid(`grid-${cls.id}`, cls.id);
-        }
-    } else {
-        await renderTimetableGrid("timetableContainer", val);
-    }
+    await renderTimetableGrid("timetableContainer", val);
 };
-
-document.getElementById('btnPrintJadual').onclick = () => window.print();
 
 document.getElementById('btnSaveManual').onclick = async () => {
     const classId = document.getElementById('viewClassSelect').value;
-    if (!classId || classId === "ALL") return alert("Pilih satu kelas!");
+    if (!classId) return alert("Pilih kelas!");
     const data = getCurrentTimetableData(); 
     await setDoc(doc(db, "timetables", classId), data);
-    alert("Disimpan manual!");
+    alert("Disimpan ke Firestore!");
 };
 
-
-// --- G. GURU GANTI (RELIEF) - MESRA GURU ---
+// --- F. GURU GANTI (RELIEF) - LOGIK MESRA GURU ---
 
 document.getElementById('btnIdentifyRelief').onclick = async () => {
+    console.log("Butang Relief diklik.");
     const absentTeacherId = document.getElementById('absentTeacherSelect').value;
     if (!absentTeacherId) return alert("Pilih guru yang tidak hadir.");
 
     const resultArea = document.getElementById('reliefResultArea');
-    resultArea.innerHTML = "<p>Sedang memproses data relief...</p>";
+    resultArea.innerHTML = "<p>⏳ Sedang memproses data relief...</p>";
 
-    // 1. Ambil data jadual semua kelas dari Firestore
+    // 1. Tarik Data Jadual Semua Kelas
     const snap = await getDocs(collection(db, "timetables"));
     const allTimetables = {};
     snap.forEach(doc => { allTimetables[doc.id] = doc.data(); });
+    
+    console.log("Data Timetables dimuatkan:", Object.keys(allTimetables).length, "kelas found.");
 
-    // 2. Petakan jadual mengikut guru (Teacher-Centric)
+    // 2. Petakan Jadual mengikut Guru
     const teacherSchedules = mapSchedulesByTeacher(allTimetables);
 
-    // 3. Kenalpasti slot (PENTING: Nama hari mesti sepadan dengan Firestore "Isnin")
+    // 3. Proses Carian Slot (Nama hari mesti Title Case: Isnin, Selasa, dsb)
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
     let html = `<div class="relief-print-wrapper">
                 <h3 style="text-align:center; border-bottom:2px solid #333; padding-bottom:10px;">
                     CADANGAN GURU GANTI: ${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}
                 </h3>`;
 
-    let totalSlotsFound = 0;
+    let totalSlotsToReplace = 0;
 
-days.forEach(day => {
+    days.forEach(day => {
         const slotsToReplace = [];
+        
+        // Cari kelas-kelas yang ada guru ini pada hari tersebut
         Object.keys(allTimetables).forEach(classId => {
             const dayData = allTimetables[classId][day];
-            
             if (dayData && Array.isArray(dayData)) {
                 dayData.forEach((slot, index) => {
-                    // 1. Debugging: Tengok perbandingan ID di Console
-                    if (slot) {
-                        console.log(`Semak: ${day}, Guru di DB: [${slot.teacherId}], Guru Dicari: [${absentTeacherId}]`);
-                    }
-                    
-                    // 2. Logik Carian: Simpan slot jika ID sepadan
                     if (slot && slot.teacherId === absentTeacherId) {
-                        slotsToReplace.push({ 
-                            slotIndex: index, 
-                            classId: classId, 
-                            subject: slot.subjectId 
-                        });
-                        totalSlotsFound++; // Pastikan let totalSlotsFound = 0; ada di atas days.forEach
+                        slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
+                        totalSlotsToReplace++;
                     }
-                }); // Tutup dayData.forEach
+                });
             }
-        }); // Tutup Object.keys.forEach
+        });
 
-        // Sambungan bina HTML untuk hari tersebut
         if (slotsToReplace.length > 0) {
             html += `<h4 style="background:#e2e8f0; padding:8px; margin-top:20px;">HARI: ${day.toUpperCase()}</h4>
                      <table class="data-table">
                         <tr>
                             <th width="15%">Waktu / Slot</th>
                             <th width="15%">Kelas</th>
-                            <th width="70%">Cadangan Guru Ganti (Paling Layak Di Atas)</th>
+                            <th width="70%">Cadangan Guru Ganti (Paling Layak)</th>
                         </tr>`;
 
             slotsToReplace.sort((a,b) => a.slotIndex - b.slotIndex).forEach(item => {
@@ -366,90 +246,57 @@ days.forEach(day => {
             });
             html += `</table>`;
         }
-    }); // Tutup days.forEach
+    });
 
-    if (totalSlotsFound === 0) {
-        html += `<p style="text-align:center; color:orange; padding:20px;">Tiada slot mengajar ditemui untuk guru ini pada hari-hari tersebut.</p>`;
+    if (totalSlotsToReplace === 0) {
+        console.log("Tiada slot ditemui untuk guru:", absentTeacherId);
+        html += `<p style="text-align:center; padding:20px; color:orange;">Tiada slot mengajar ditemui untuk guru ini dalam pangkalan data.</p>`;
     }
 
-    html += `</div><button class="btn-outline-primary" onclick="window.print()" style="margin-top:20px; width:100%;">Cetak Senarai Relief</button>`;
+    html += `</div>`;
     resultArea.innerHTML = html;
 };
 
-/**
- * Membina objek jadual untuk setiap guru
- */
+// --- G. HELPER FUNCTIONS ---
+
 function mapSchedulesByTeacher(allTimetables) {
     const map = {};
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
 
-    // Inisialisasi map untuk semua guru
     teachersList.forEach(t => { 
         map[t.id] = {}; 
-        days.forEach(d => {
-            map[t.id][d] = Array(12).fill(null);
-        });
+        days.forEach(d => { map[t.id][d] = Array(12).fill(null); });
     });
 
-    // Isi map berdasarkan jadual kelas
     Object.keys(allTimetables).forEach(classId => {
         const classTable = allTimetables[classId];
         Object.keys(classTable).forEach(day => {
             if (Array.isArray(classTable[day])) {
                 classTable[day].forEach((slot, idx) => {
                     if (slot && slot.teacherId && map[slot.teacherId] && map[slot.teacherId][day]) {
-                        map[slot.teacherId][day][idx] = { 
-                            classId: classId, 
-                            subjectId: slot.subjectId 
-                        };
+                        map[slot.teacherId][day][idx] = { classId, subjectId: slot.subjectId };
                     }
                 });
             }
         });
     });
-    return map; 
+    return map;
 }
 
-/**
- * Logik Mesra Guru: Cari siapa yang layak untuk relief
- */
 function findEligibleRelief(slotIdx, day, teacherSchedules) {
     let results = [];
-
     teachersList.forEach(t => {
-        const teacherData = teacherSchedules[t.id];
-        if (!teacherData || !teacherData[day]) return;
+        const schedule = teacherSchedules[t.id]?.[day];
+        if (!schedule) return;
+        if (schedule[slotIdx] !== null) return; // Sedang mengajar
 
-        const schedule = teacherData[day];
-        
-        // 1. Cek jika guru sedang mengajar di slot ini
-        if (schedule[slotIdx] !== null) return; 
-
-        // 2. Cek Logik Mesra Guru: 2 Sesi Berturut-turut
         let isEligible = true;
         let reason = "Masa Kosong";
-
-        if (slotIdx >= 2) {
-            const s1 = schedule[slotIdx - 1];
-            const s2 = schedule[slotIdx - 2];
-            
-            if (s1 !== null && s2 !== null) {
-                isEligible = false;
-                reason = `Penat: Baru selesai kelas ${s2.classId} & ${s1.classId}`;
-            }
+        if (slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]) {
+            isEligible = false;
+            reason = "Penat (2 Jam Berturut-turut)";
         }
-
-        results.push({
-            id: t.id,
-            name: t.name,
-            isEligible: isEligible,
-            reason: reason
-        });
+        results.push({ id: t.id, name: t.name, isEligible, reason });
     });
-
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
-
-
-
-
