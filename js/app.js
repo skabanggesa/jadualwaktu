@@ -373,43 +373,67 @@ function mapSchedulesByTeacher(allTimetables) {
         for(let d in map[t.id]) { for(let i=0; i<12; i++) map[t.id][d][i] = null; }
     });
 
+// --- BAGIAN 1: Pemetaan Jadwal ---
+// Pastikan blok ini berada di dalam sebuah fungsi, misal: function mapSchedulesByTeacher() { ... }
 Object.keys(allTimetables).forEach(classId => {
     const classTable = allTimetables[classId];
+    
     Object.keys(classTable).forEach(day => {
-        // CEK DI SINI: Hanya jalankan jika datanya adalah Array
+        // Cek apakah ini benar-benar data hari (Array)
         if (Array.isArray(classTable[day])) {
             classTable[day].forEach((slot, idx) => {
-                if (slot && map[slot.teacherId]) {
-                    // Pastikan map[slot.teacherId][day] juga sudah terinisialisasi sebagai array/objek
-                    if (!map[slot.teacherId][day]) map[slot.teacherId][day] = {}; 
+                // Pastikan slot tidak null dan ID guru terdaftar di map
+                if (slot && slot.teacherId && map[slot.teacherId]) {
                     
-                    map[slot.teacherId][day][idx] = { classId, subjectId: slot.subjectId };
+                    // Inisialisasi hari di map guru jika belum ada
+                    if (!map[slot.teacherId][day]) {
+                        map[slot.teacherId][day] = []; 
+                    }
+                    
+                    map[slot.teacherId][day][idx] = { 
+                        classId: classId, 
+                        subjectId: slot.subjectId 
+                    };
                 }
             });
         }
     });
-});
+}); // Tutup forEach allTimetables
+
 
 /**
- * Logik Mesra Guru: Cari siapa yang layak
+ * --- BAGIAN 2: Logik Mesra Guru ---
+ * Cari siapa yang layak untuk relief
  */
 function findEligibleRelief(slotIdx, day, teacherSchedules) {
     let results = [];
 
+    // Pastikan teachersList sudah terdefinisi di scope global/atas
     teachersList.forEach(t => {
-        const schedule = teacherSchedules[t.id][day];
+        // Safety Check: Pastikan data jadwal guru dan hari tersebut ada
+        const teacherData = teacherSchedules[t.id];
+        if (!teacherData || !teacherData[day]) {
+            return; // Lewati jika guru tidak punya jadwal sama sekali
+        }
+
+        const schedule = teacherData[day];
         
-        // 1. Cek jika sedang mengajar kelas sendiri
-        if (schedule[slotIdx] !== null) return; 
+        // 1. Cek jika sedang mengajar kelas sendiri (slot tidak null)
+        if (schedule[slotIdx] !== null && schedule[slotIdx] !== undefined) {
+            return; 
+        }
 
         // 2. Cek Logik Mesra Guru: 2 Sesi Berturut-turut
         let isEligible = true;
         let reason = "Masa Kosong";
 
+        // Cek dua jam ke belakang (slotIdx-1 dan slotIdx-2)
         if (slotIdx >= 2) {
             const s1 = schedule[slotIdx - 1];
             const s2 = schedule[slotIdx - 2];
-            if (s1 !== null && s2 !== null) {
+            
+            // Jika dua slot sebelumnya TIDAK null (artinya guru sedang mengajar)
+            if (s1 && s2) {
                 isEligible = false;
                 reason = `Penat: Baru selesai kelas ${s2.classId} & ${s1.classId}`;
             }
@@ -423,6 +447,7 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
         });
     });
 
-    // Susun: Layak di atas
+    // Susun: Yang layak (true) berada di urutan atas
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
+
