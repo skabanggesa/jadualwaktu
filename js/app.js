@@ -205,6 +205,9 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
             const dayData = allTimetables[classId][day];
             if (dayData && Array.isArray(dayData)) {
                 dayData.forEach((slot, index) => {
+                console.log("Contoh struktur slot di DB:", slot); 
+                    }
+                                
                     if (slot && slot.teacherId === absentTeacherId) {
                         slotsToReplace.push({ slotIndex: index, classId: classId, subject: slot.subjectId });
                         totalSlotsToReplace++;
@@ -300,3 +303,4 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     });
     return results.sort((a, b) => b.isEligible - a.isEligible);
 }
+
