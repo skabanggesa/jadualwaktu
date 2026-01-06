@@ -27,14 +27,35 @@ export async function startGenerating() {
         for (const cls of classesList) {
             let classAssigns = [...assignments.filter(a => a.classId === cls.id)];
             
-            // --- 1. LOGIK GABUNGAN PAI (QURAN/ULUM) & PM ---
-            // Mencari tugasan yang mengandungi PAI atau PM
-            const piTasks = classAssigns.filter(a => a.subjectId.includes("PAI"));
+            // --- 0. LOGIK GABUNGAN CO-TEACHING (Sama Subjek, Guru Berbeza) ---
+            // Menggabungkan guru yang mengajar subjek sama dalam satu kelas (e.g., PI(QURAN) oleh LAI dan KHU)
+            const groupedBySubject = {};
+            classAssigns.forEach(a => {
+                const sid = a.subjectId;
+                if (!groupedBySubject[sid]) {
+                    groupedBySubject[sid] = { ...a };
+                } else {
+                    // Jika subjek sama, gabungkan teacherId (e.g., "LAI/KHU")
+                    const currentTids = groupedBySubject[sid].teacherId.split('/');
+                    if (!currentTids.includes(a.teacherId)) {
+                        groupedBySubject[sid].teacherId += `/${a.teacherId}`;
+                    }
+                }
+            });
+            classAssigns = Object.values(groupedBySubject);
+
+            // --- 1. LOGIK GABUNGAN PI / PM (Parallel) ---
+            // Mencari tugasan yang mengandungi PI atau PM untuk digabungkan selari
+            const piTasks = classAssigns.filter(a => a.subjectId.includes("PI") || a.subjectId.includes("PAI"));
             const pmTask = classAssigns.find(a => a.subjectId === "PM");
 
             if (piTasks.length > 0 && pmTask) {
                 // Keluarkan rekod asal untuk digantikan dengan versi gabungan (Parallel)
-                classAssigns = classAssigns.filter(a => !a.subjectId.includes("PAI") && a.subjectId !== "PM");
+                classAssigns = classAssigns.filter(a => 
+                    !a.subjectId.includes("PI") && 
+                    !a.subjectId.includes("PAI") && 
+                    a.subjectId !== "PM"
+                );
                 
                 let pmSlotsRemaining = pmTask.periods || pmTask.totalSlots;
 
@@ -45,7 +66,7 @@ export async function startGenerating() {
                     if (slotsToMerge > 0) {
                         classAssigns.push({
                             subjectId: `${pi.subjectId} / PM`,
-                            teacherId: `${pi.teacherId}/${pmTask.teacherId}`, // Gabung ID Guru
+                            teacherId: `${pi.teacherId}/${pmTask.teacherId}`, // Gabung ID Guru (e.g., "LAI/KHU/PM_GURU")
                             totalSlots: slotsToMerge,
                             isDouble: pi.isDouble || false,
                             classId: cls.id,
@@ -55,7 +76,6 @@ export async function startGenerating() {
                     }
                 });
                 
-                // Jika ada baki slot PM yang tidak selari dengan mana-mana PAI
                 if (pmSlotsRemaining > 0) {
                     classAssigns.push({ ...pmTask, totalSlots: pmSlotsRemaining });
                 }
@@ -66,7 +86,7 @@ export async function startGenerating() {
         }
         
         await saveToCloud();
-        alert("Jadual Waktu (Versi PAI/PM Selari) Berjaya Dijana!");
+        alert("Jadual Waktu Berjaya Dijana (Termasuk Co-Teaching & Parallel)!");
     } catch (e) { 
         console.error("Ralat Penjanaan:", e); 
         alert("Gagal menjana jadual: " + e.message); 
@@ -129,7 +149,6 @@ async function generateClassGrid(classId, classAssigns) {
 function findSlot(dayGrid, day, size, tId, cId) {
     const max = MAX_SLOTS[day];
     for (let s = 1; s <= max - (size - 1); s++) {
-        // Langkau waktu rehat (Slot 6 biasanya rehat)
         if (s === 6 || (s < 6 && s + size > 6)) continue; 
 
         let free = true;
@@ -144,19 +163,14 @@ function findSlot(dayGrid, day, size, tId, cId) {
     return -1;
 }
 
-/**
- * --- 2. SEMAKAN PERTEMBUNGAN CO-TEACHING ---
- * Memastikan semua guru dalam senarai (split by '/') tidak sibuk.
- */
 function isTeacherFree(tId, day, slot) {
     if (tId === "SEMUA") return true;
-    const incomingTeachers = tId.split('/'); // Pecahkan ID jika ada ramai guru
+    const incomingTeachers = tId.split('/');
     
     for (let classId in timetableResult) {
         const cell = timetableResult[classId][day]?.[slot];
         if (cell && cell.teacherId) {
             const existingTeachers = cell.teacherId.split('/');
-            // Jika ada mana-mana guru yang bertembung
             if (incomingTeachers.some(id => existingTeachers.includes(id))) {
                 return false;
             }
