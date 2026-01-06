@@ -9,10 +9,7 @@ import {
     doc, 
     setDoc, 
     getDocs, 
-    deleteDoc,
-    addDoc,
-    writeBatch,
-    serverTimestamp
+    deleteDoc
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { 
     getAuth, 
@@ -23,25 +20,30 @@ import {
 import { startGenerating } from "./engine-generator.js";
 import { renderTimetableGrid, getCurrentTimetableData } from "./ui-render.js";
 
-// --- A. PEMUBAH UBAH GLOBAL ---
+// --- A. PEMUBAH UBAH GLOBAL & MAPPING ---
 const auth = getAuth();
 let teachersList = [];
 let subjectsList = [];
 let classesList = [];
 
-let assignmentDraft = []; // Draf untuk Agihan Tugas (Simpan ke 'assignments')
-let reliefDraft = [];     // Draf untuk Guru Ganti (Simpan ke 'relief_logs')
-
 const timeMapping = {
-    "1": "07:30 - 08:00", "2": "08:00 - 08:30", "3": "08:30 - 09:00",
-    "4": "09:00 - 09:30", "5": "09:30 - 10:00", "6": "10:00 - 10:30",
-    "7": "10:30 - 11:00", "8": "11:00 - 11:30", "9": "11:30 - 12:00",
-    "10": "12:00 - 12:30", "11": "12:30 - 13:00", "12": "13:00 - 13:30"
+    "1": "07:30 - 08:00",
+    "2": "08:00 - 08:30",
+    "3": "08:30 - 09:00",
+    "4": "09:00 - 09:30",
+    "5": "09:30 - 10:00",
+    "6": "10:00 - 10:30",
+    "7": "10:30 - 11:00",
+    "8": "11:00 - 11:30",
+    "9": "11:30 - 12:00",
+    "10": "12:00 - 12:30",
+    "11": "12:30 - 13:00",
+    "12": "13:00 - 13:30"
 };
 
 const clean = (str) => (str ? str.trim().replace(/\s+/g, '') : "");
 
-// --- B. AUTHENTICATION ---
+// --- B. PENGURUSAN AKSES & AUTHENTICATION ---
 onAuthStateChanged(auth, (user) => {
     const authSection = document.getElementById('auth-section');
     const appContainer = document.getElementById('app-container');
@@ -55,8 +57,24 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-// --- C. LOAD & RENDER MASTER DATA ---
+if (document.getElementById('btnLogin')) {
+    document.getElementById('btnLogin').onclick = async () => {
+        const email = document.getElementById('loginEmail').value;
+        const pass = document.getElementById('loginPassword').value;
+        try { await signInWithEmailAndPassword(auth, email, pass); } 
+        catch (error) { alert("Akses ditolak: " + error.message); }
+    };
+}
+
+if (document.getElementById('btnLogout')) {
+    document.getElementById('btnLogout').onclick = async () => {
+        if (confirm("Log keluar?")) { await signOut(auth); location.reload(); }
+    };
+}
+
+// --- C. PENGURUSAN DATA MASTER ---
 async function loadAllData() {
+    console.log("Memuatkan data dari Firestore...");
     const [snapT, snapS, snapC] = await Promise.all([
         getDocs(collection(db, "teachers")),
         getDocs(collection(db, "subjects")),
@@ -71,7 +89,6 @@ async function loadAllData() {
     renderSubjectTable();
 }
 
-// (Fungsi deleteRecord, saveTeacher, dll kekal sama)
 window.deleteRecord = async (col, id) => {
     if (confirm(`Padam rekod ${id}?`)) {
         await deleteDoc(doc(db, col, id));
@@ -79,96 +96,66 @@ window.deleteRecord = async (col, id) => {
     }
 };
 
-// --- D. AGIHAN TUGAS (WORKLOAD) -> KOLEKSI 'assignments' ---
-
-// Tambah rekod ke dalam draf lokal
-const btnAddToAssignment = document.getElementById('btnAddToAssignmentDraft');
-if (btnAddToAssignment) {
-    btnAddToAssignment.onclick = () => {
-        const tId = document.getElementById('selectTeacher').value;
-        const sId = document.getElementById('selectSubject').value;
-        const cId = document.getElementById('selectClass').value;
-        const periods = document.getElementById('inputPeriods')?.value;
-
-        if (!tId || !sId || !cId || !periods) return alert("Sila lengkapkan pilihan agihan.");
-
-        assignmentDraft.push({
-            teacherId: tId,
-            teacherName: teachersList.find(t => t.id === tId)?.name || tId,
-            subjectId: sId,
-            subjectName: subjectsList.find(s => s.id === sId)?.name || sId,
-            classId: cId,
-            periods: parseInt(periods)
-        });
-        renderAssignmentDraftTable();
-    };
-}
-
-function renderAssignmentDraftTable() {
-    const container = document.getElementById('assignmentDraftContainer');
-    if (!container) return;
-    if (assignmentDraft.length === 0) { container.innerHTML = ""; return; }
-
-    let rows = assignmentDraft.map((item, idx) => `
-        <tr>
-            <td>${item.teacherName}</td>
-            <td>${item.subjectName}</td>
-            <td>${item.classId}</td>
-            <td>${item.periods}</td>
-            <td><button class="btn-sm btn-delete" onclick="removeFromAssignmentDraft(${idx})">Batal</button></td>
-        </tr>`).join('');
-
-    container.innerHTML = `
-        <div style="background:#f9f9f9; padding:15px; border-left:5px solid #2980b9; margin-top:20px;">
-            <h3>Draf Agihan Tugas (Belum Disimpan)</h3>
-            <table class="data-table">
-                <thead><tr><th>Guru</th><th>Subjek</th><th>Kelas</th><th>Waktu</th><th>Aksi</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
-            <button onclick="saveAssignmentsToCloud()" class="btn-primary" style="margin-top:10px; background:#2980b9;">
-                💾 Simpan Semua ke Cloud (Koleksi: assignments)
-            </button>
-        </div>`;
-}
-
-window.removeFromAssignmentDraft = (idx) => {
-    assignmentDraft.splice(idx, 1);
-    renderAssignmentDraftTable();
-};
-
-// SIMPAN KE KOLEKSI 'assignments'
-window.saveAssignmentsToCloud = async () => {
-    if (assignmentDraft.length === 0) return;
-    if (!confirm(`Simpan ${assignmentDraft.length} rekod ke koleksi assignments?`)) return;
-
-    try {
-        const batch = writeBatch(db);
-        assignmentDraft.forEach(item => {
-            // ID Dokumen: Kelas_Subjek_Guru
-            const docId = `${item.classId}_${item.subjectId}_${item.teacherId}`;
-            const docRef = doc(db, "assignments", docId);
-            batch.set(docRef, {
-                ...item,
-                updatedAt: serverTimestamp()
-            });
-        });
-        await batch.commit();
-        alert("Agihan berjaya disimpan ke koleksi 'assignments'!");
-        assignmentDraft = [];
-        renderAssignmentDraftTable();
-    } catch (e) {
-        alert("Ralat simpan assignments: " + e.message);
+document.getElementById('btnSaveTeacher').onclick = () => {
+    const id = document.getElementById('regTeacherId').value;
+    const name = document.getElementById('regTeacherName').value;
+    const short = document.getElementById('regTeacherShort').value.toUpperCase();
+    if(id && name) {
+        setDoc(doc(db, "teachers", clean(id)), { name, shortform: short, canRelief: true })
+        .then(() => { alert("Simpan Berjaya!"); loadAllData(); });
     }
 };
 
+// --- D. RENDER TABLES & DROPDOWNS ---
+function renderTeacherTable() {
+    const container = document.getElementById('teacherTableContainer');
+    let html = `<table class="data-table"><tr><th>ID</th><th>Nama</th><th>Tindakan</th></tr>`;
+    teachersList.forEach(t => {
+        html += `<tr><td>${t.id}</td><td>${t.name}</td>
+        <td><button class="btn-sm btn-delete" onclick="deleteRecord('teachers', '${t.id}')">Padam</button></td></tr>`;
+    });
+    container.innerHTML = html + `</table>`;
+}
+
+function renderSubjectTable() {
+    const container = document.getElementById('subjectTableContainer');
+    let html = `<table class="data-table"><tr><th>ID</th><th>Subjek</th><th>Tindakan</th></tr>`;
+    subjectsList.forEach(s => {
+        html += `<tr><td>${s.id}</td><td>${s.name}</td>
+        <td><button class="btn-sm btn-delete" onclick="deleteRecord('subjects', '${s.id}')">Padam</button></td></tr>`;
+    });
+    container.innerHTML = html + `</table>`;
+}
+
+function populateDropdowns() {
+    const fill = (elId, list, label, includeAll = false) => {
+        const el = document.getElementById(elId);
+        if(!el) return;
+        let options = `<option value="">-- Pilih ${label} --</option>`;
+        if(includeAll) options += `<option value="ALL">-- SEMUA KELAS --</option>`;
+        
+        // Memaparkan Nama (ID) supaya tidak keliru kod G08
+        options += list.map(i => {
+            const displayName = i.name ? `${i.name} (${i.id})` : i.id;
+            return `<option value="${i.id}">${displayName}</option>`;
+        }).join('');
+        el.innerHTML = options;
+    };
+    fill('selectTeacher', teachersList, "Guru");
+    fill('selectSubject', subjectsList, "Subjek");
+    fill('selectClass', classesList, "Kelas");
+    fill('viewClassSelect', classesList, "Kelas", true); // Tambah pilihan ALL
+    fill('absentTeacherSelect', teachersList, "Guru");
+}
+
 // --- E. GENERATE & VIEW JADUAL ---
-// Nota: Engine generator biasanya membaca 'assignments' dan menulis ke 'timetables'
 document.getElementById('btnGenerate').onclick = () => { if(confirm("Jana jadual baru?")) startGenerating(); };
 
 document.getElementById('btnViewJadual').onclick = async () => {
     const val = document.getElementById('viewClassSelect').value;
     const container = document.getElementById("timetableContainer");
     if (!val) return alert("Pilih kelas!");
+
     container.innerHTML = "<p>⏳ Memuatkan jadual...</p>";
 
     if (val === "ALL") {
@@ -177,6 +164,7 @@ document.getElementById('btnViewJadual').onclick = async () => {
             const classDiv = document.createElement('div');
             classDiv.style.marginBottom = "50px";
             classDiv.style.pageBreakAfter = "always"; 
+            // Tambah tajuk yang hanya nampak masa cetak
             classDiv.innerHTML = `<h2 class="print-only-title" style="text-align:center;">JADUAL WAKTU KELAS: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
             container.appendChild(classDiv);
             await renderTimetableGrid(`grid-${cls.id}`, cls.id);
@@ -187,8 +175,22 @@ document.getElementById('btnViewJadual').onclick = async () => {
     }
 };
 
+// --- FIX: Butang Cetak Jadual ---
+// Kita kesan butang menggunakan ID secara terus di dalam JS
+const btnPrint = document.getElementById('btnPrintJadual');
+if (btnPrint) {
+    btnPrint.onclick = () => {
+        console.log("Memulakan proses cetakan...");
+        window.print();
+    };
+}
+
+// Tambah ini juga untuk sokongan global (pilihan)
+window.printTimetable = () => {
+    window.print();
+};
+
 // --- F. GURU GANTI (RELIEF) ---
-// Fungsi ini membaca data 'timetables' (hasil yang sudah dijana)
 document.getElementById('btnIdentifyRelief').onclick = async () => {
     const absentTeacherId = document.getElementById('absentTeacherSelect').value;
     const reliefDateVal = document.getElementById('reliefDate').value;
@@ -219,9 +221,9 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
                 const currentTeacher = slot.teacherId || slot.teacher;
                 if (slot && currentTeacher === absentTeacherId) {
                     slotsToReplace.push({ 
-                        slotKey, 
+                        slotKey: slotKey, 
                         slotIndex: parseInt(slotKey)-1, 
-                        classId, 
+                        classId: classId, 
                         subject: slot.subjectId || slot.subject 
                     });
                 }
@@ -230,84 +232,58 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     });
 
     if (slotsToReplace.length === 0) {
-        resultArea.innerHTML = `<p style="text-align:center; color:orange;">Tiada kelas untuk guru tersebut pada hari ${selectedDay}.</p>`;
+        resultArea.innerHTML = `<p style="text-align:center; color:orange;">Tiada kelas ditemui pada hari ${selectedDay}.</p>`;
         return;
     }
 
     slotsToReplace.sort((a, b) => a.slotIndex - b.slotIndex);
 
-    let htmlSuggestions = `<h3>Cadangan Agihan Relief</h3>
-    <table class="data-table">
-        <tr><th>Waktu</th><th>Kelas</th><th>Subjek</th><th>Calon Guru Ganti</th><th>Tindakan</th></tr>`;
-
+    let tableRows = "";
     slotsToReplace.forEach(item => {
         let candidates = findEligibleRelief(item.slotIndex, selectedDay, teacherSchedules);
         candidates = candidates.filter(c => c.id !== absentTeacherId);
         candidates.sort((a, b) => (b.isEligible - a.isEligible) || (dailyReliefCount[a.id] - dailyReliefCount[b.id]));
 
-        const bestCandidate = candidates[0];
+        const selected = candidates[0];
+        if (selected) dailyReliefCount[selected.id]++;
+
+        // Gunakan Mapping Masa
         const timeStr = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
 
-        htmlSuggestions += `
+        tableRows += `
             <tr>
-                <td>${timeStr}</td><td>${item.classId}</td><td>${item.subject}</td>
-                <td>${bestCandidate ? `<b>${bestCandidate.name}</b> <br><small>(${bestCandidate.reason})</small>` : 'TIADA'}</td>
-                <td>
-                    <button class="btn-sm" onclick="addToReliefDraft('${item.slotKey}', '${item.classId}', '${item.subject}', '${bestCandidate?.id}', '${bestCandidate?.name}')">
-                        + Draf Relief
-                    </button>
-                </td>
+                <td style="text-align:center; border:1px solid #000;"><b>${timeStr}</b></td>
+                <td style="text-align:center; border:1px solid #000;">${item.classId}</td>
+                <td style="text-align:center; border:1px solid #000;">${item.subject}</td>
+                <td style="border:1px solid #000; padding:5px;">${selected ? `<b>${selected.name}</b> <br><small>(${selected.reason})</small>` : 'TIADA GURU'}</td>
             </tr>`;
     });
 
-    resultArea.innerHTML = htmlSuggestions + `</table><div id="reliefDraftContainer"></div>`;
-    renderReliefDraftUI();
+    resultArea.innerHTML = `
+        <div id="printableReliefArea" style="padding:20px; background:#fff;">
+            <div style="text-align:center; border-bottom:2px solid #000; margin-bottom:15px; padding-bottom:10px;">
+                <h2 style="margin:0;">SLIP GURU GANTI (RELIEF)</h2>
+                <p>Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b></p>
+                <p>Guru Tidak Hadir: <b>${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}</b></p>
+            </div>
+            <table style="width:100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background:#f2f2f2;">
+                        <th style="border:1px solid #000; padding:8px;">Waktu</th>
+                        <th style="border:1px solid #000; padding:8px;">Kelas</th>
+                        <th style="border:1px solid #000; padding:8px;">Subjek Asal</th>
+                        <th style="border:1px solid #000; padding:8px;">Guru Ganti Dilantik</th>
+                    </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+            </table>
+            <button onclick="window.print()" class="no-print" style="margin-top:20px; width:100%; padding:10px; background:#27ae60; color:white; border:none; border-radius:5px; cursor:pointer;">
+                🖨️ Cetak Slip Relief
+            </button>
+        </div>`;
 };
 
-window.addToReliefDraft = (slotKey, classId, subject, tId, tName) => {
-    if (!tId || tId === "undefined") return alert("Pilih guru ganti!");
-    reliefDraft.push({ slotKey, classId, subject, teacherId: tId, teacherName: tName, timeStr: timeMapping[slotKey] });
-    renderReliefDraftUI();
-};
-
-function renderReliefDraftUI() {
-    const container = document.getElementById('reliefDraftContainer');
-    if (reliefDraft.length === 0) { container.innerHTML = ""; return; }
-    let rows = reliefDraft.map((d, index) => `
-        <tr><td>${d.timeStr}</td><td>${d.classId}</td><td>${d.subject}</td><td>${d.teacherName}</td>
-        <td><button onclick="removeFromReliefDraft(${index})">❌</button></td></tr>`).join('');
-    container.innerHTML = `<h4>Draf Slip Relief</h4><table class="data-table">${rows}</table>
-    <button onclick="saveReliefToCloud()" class="btn-primary">💾 Simpan Relief Logs</button>`;
-}
-
-window.removeFromReliefDraft = (idx) => { reliefDraft.splice(idx, 1); renderReliefDraftUI(); };
-
-window.saveReliefToCloud = async () => {
-    const date = document.getElementById('reliefDate').value;
-    const teacher = document.getElementById('absentTeacherSelect').value;
-    await addDoc(collection(db, "relief_logs"), { date, absentTeacherId: teacher, assignments: reliefDraft, createdAt: serverTimestamp() });
-    alert("Relief disimpan!"); reliefDraft = []; renderReliefDraftUI();
-};
-
-// --- G. HELPERS (Dropdowns, Tables, Mapping) ---
-function populateDropdowns() {
-    const fill = (id, list, label, all=false) => {
-        const el = document.getElementById(id); if(!el) return;
-        let opt = `<option value="">-- ${label} --</option>`;
-        if(all) opt += `<option value="ALL">SEMUA</option>`;
-        opt += list.map(i => `<option value="${i.id}">${i.name || i.id}</option>`).join('');
-        el.innerHTML = opt;
-    };
-    fill('selectTeacher', teachersList, "Guru");
-    fill('selectSubject', subjectsList, "Subjek");
-    fill('selectClass', classesList, "Kelas");
-    fill('viewClassSelect', classesList, "Kelas", true); 
-    fill('absentTeacherSelect', teachersList, "Guru");
-}
-
-function renderTeacherTable() { /* Sama seperti kod anda */ }
-function renderSubjectTable() { /* Sama seperti kod anda */ }
-
+// --- G. HELPER FUNCTIONS ---
 function mapSchedulesByTeacher(allTimetables) {
     const map = {};
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
@@ -315,6 +291,7 @@ function mapSchedulesByTeacher(allTimetables) {
         map[t.id] = {}; 
         days.forEach(d => { map[t.id][d] = Array(12).fill(null); });
     });
+
     Object.keys(allTimetables).forEach(classId => {
         const classTable = allTimetables[classId];
         Object.keys(classTable).forEach(day => {
@@ -340,7 +317,7 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
         const schedule = teacherSchedules[t.id]?.[day];
         if (!schedule || schedule[slotIdx] !== null) return;
         let isEligible = !(slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]);
-        results.push({ id: t.id, name: t.name, isEligible, reason: isEligible ? "Masa Kosong" : "Rehat Wajib" });
+        results.push({ id: t.id, name: t.name, isEligible, reason: isEligible ? "Masa Kosong" : "Rehat Wajib (2 Jam Berturut)" });
     });
     return results;
 }
