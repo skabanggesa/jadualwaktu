@@ -26,22 +26,23 @@ let teachersList = [];
 let subjectsList = [];
 let classesList = [];
 
-// --- PEMETAAN MASA (Slot 1 = 07:30, dll) ---
+// --- PEMETAAN MASA (Pastikan ini selari dengan jadual sekolah anda) ---
 const timeMapping = {
-    "1": "07:10 - 07:40",
-    "2": "07:40 - 08:10",
-    "3": "08:10 - 09:40",
-    "4": "08:40 - 09:10",
-    "5": "09:10 - 9:40",
-    "6": "9:00 - 10:00",
-    "7": "10:00 - 10:30",
-    "8": "10:30 - 11:00",
-    "9": "11:00 - 11:30",
-    "10": "11:30 - 12:00",
-    "11": "12:00 - 12:30"
+    "1": "07:30 - 08:00",
+    "2": "08:00 - 08:30",
+    "3": "08:30 - 09:00",
+    "4": "09:00 - 09:30",
+    "5": "09:30 - 10:00",
+    "6": "10:00 - 10:30",
+    "7": "10:30 - 11:00",
+    "8": "11:00 - 11:30",
+    "9": "11:30 - 12:00",
+    "10": "12:00 - 12:30",
+    "11": "12:30 - 13:00",
+    "12": "13:00 - 13:30"
 };
 
-const clean = (str) => str ? str.trim().replace(/\s+/g, '') : "";
+const clean = (str) => (str ? str.trim().replace(/\s+/g, '') : "");
 
 // --- B. PENGURUSAN AKSES & AUTHENTICATION ---
 onAuthStateChanged(auth, (user) => {
@@ -57,8 +58,10 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-if (document.getElementById('btnLogin')) {
-    document.getElementById('btnLogin').onclick = async () => {
+// Login Handlers
+const btnLogin = document.getElementById('btnLogin');
+if (btnLogin) {
+    btnLogin.onclick = async () => {
         const email = document.getElementById('loginEmail').value;
         const pass = document.getElementById('loginPassword').value;
         try { await signInWithEmailAndPassword(auth, email, pass); } 
@@ -66,26 +69,34 @@ if (document.getElementById('btnLogin')) {
     };
 }
 
-if (document.getElementById('btnLogout')) {
-    document.getElementById('btnLogout').onclick = async () => {
+const btnLogout = document.getElementById('btnLogout');
+if (btnLogout) {
+    btnLogout.onclick = async () => {
         if (confirm("Log keluar?")) { await signOut(auth); location.reload(); }
     };
 }
 
 // --- C. PENGURUSAN DATA MASTER ---
 async function loadAllData() {
-    const [snapT, snapS, snapC] = await Promise.all([
-        getDocs(collection(db, "teachers")),
-        getDocs(collection(db, "subjects")),
-        getDocs(collection(db, "classes"))
-    ]);
-    teachersList = snapT.docs.map(d => ({ id: d.id, ...d.data() }));
-    subjectsList = snapS.docs.map(d => ({ id: d.id, ...d.data() }));
-    classesList = snapC.docs.map(d => ({ id: d.id, ...d.data() }));
-    
-    populateDropdowns();
-    renderTeacherTable();
-    renderSubjectTable();
+    try {
+        console.log("Memuatkan data...");
+        const [snapT, snapS, snapC] = await Promise.all([
+            getDocs(collection(db, "teachers")),
+            getDocs(collection(db, "subjects")),
+            getDocs(collection(db, "classes"))
+        ]);
+        
+        teachersList = snapT.docs.map(d => ({ id: d.id, ...d.data() }));
+        subjectsList = snapS.docs.map(d => ({ id: d.id, ...d.data() }));
+        classesList = snapC.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        populateDropdowns();
+        renderTeacherTable();
+        renderSubjectTable();
+        console.log("Data berjaya dimuatkan.");
+    } catch (err) {
+        console.error("Ralat muat data:", err);
+    }
 }
 
 async function saveMasterData(col, id, data) {
@@ -103,18 +114,33 @@ window.deleteRecord = async (col, id) => {
     }
 };
 
+// Button Save Handlers
 document.getElementById('btnSaveTeacher').onclick = () => {
     const id = document.getElementById('regTeacherId').value;
     const name = document.getElementById('regTeacherName').value;
     const short = document.getElementById('regTeacherShort').value.toUpperCase();
+    // Default: Boleh relief. Anda boleh tukar secara manual di DB jika perlu blacklist.
     if(id && name) saveMasterData("teachers", id, { name, shortform: short, canRelief: true });
 };
 
-// ... (Kod btnSaveSubject dan btnSaveClass dikekalkan sama)
+document.getElementById('btnSaveSubject').onclick = () => {
+    const id = document.getElementById('regSubId').value;
+    const name = document.getElementById('regSubName').value;
+    const slots = parseInt(document.getElementById('regSubSlots').value);
+    const isDouble = document.getElementById('regSubDouble').checked;
+    if(id && name) saveMasterData("subjects", id, { name, slots, isDouble });
+};
+
+document.getElementById('btnSaveClass').onclick = () => {
+    const id = document.getElementById('regClassId').value;
+    const name = document.getElementById('regClassName').value;
+    if(id && name) saveMasterData("classes", id, { name });
+};
 
 // --- D. RENDER TABLES & DROPDOWNS ---
 function renderTeacherTable() {
     const container = document.getElementById('teacherTableContainer');
+    if (!container) return;
     let html = `<table class="data-table"><tr><th>ID</th><th>Nama</th><th>Singkatan</th><th>Tindakan</th></tr>`;
     teachersList.forEach(t => {
         html += `<tr><td>${t.id}</td><td>${t.name}</td><td>${t.shortform || '-'}</td>
@@ -125,6 +151,7 @@ function renderTeacherTable() {
 
 function renderSubjectTable() {
     const container = document.getElementById('subjectTableContainer');
+    if (!container) return;
     let html = `<table class="data-table"><tr><th>ID</th><th>Subjek</th><th>Slot</th><th>Tindakan</th></tr>`;
     subjectsList.forEach(s => {
         html += `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.slots} ${s.isDouble ? '(2)' : '(1)'}</td>
@@ -143,7 +170,7 @@ function populateDropdowns() {
     fill('selectTeacher', teachersList, "Guru");
     fill('selectSubject', subjectsList, "Subjek");
     fill('selectClass', classesList, "Kelas");
-    fill('viewClassSelect', classesList, "Kelas"); // Filter Kelas
+    fill('viewClassSelect', classesList, "Kelas"); // Filter Jadual Kelas
     fill('absentTeacherSelect', teachersList, "Guru");
 }
 
@@ -156,8 +183,8 @@ document.getElementById('btnViewJadual').onclick = async () => {
     await renderTimetableGrid("timetableContainer", val);
 };
 
-// Butang Cetak Jadual Waktu Kelas
-window.printTimetable = () => {
+// Fungsi Cetak Yang Dibetulkan (Non-Destructive)
+window.printPage = () => {
     window.print();
 };
 
@@ -197,7 +224,8 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         if (dayData) {
             Object.keys(dayData).forEach(slotKey => {
                 const slot = dayData[slotKey];
-                if (slot && (slot.teacherId === absentTeacherId || slot.teacher === absentTeacherId)) {
+                const tId = slot.teacherId || slot.teacher;
+                if (slot && tId === absentTeacherId) {
                     slotsToReplace.push({ slotKey, slotIndex: parseInt(slotKey)-1, classId, subject: slot.subjectId || slot.subject });
                 }
             });
@@ -205,7 +233,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     });
 
     if (slotsToReplace.length === 0) {
-        resultArea.innerHTML = `<p style="color:orange;">Tiada kelas untuk diganti.</p>`;
+        resultArea.innerHTML = `<p style="color:orange; text-align:center;">Tiada kelas untuk diganti pada hari ${selectedDay}.</p>`;
         return;
     }
 
@@ -213,30 +241,35 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
 
     let html = `
         <div id="printableReliefArea">
-            <div class="print-header">
-                <h2>SLIP GURU GANTI (RELIEF)</h2>
-                <p>Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b> | Guru Tidak Hadir: <b>${absentTeacherId}</b></p>
+            <div style="text-align:center; margin-bottom:15px; border-bottom:1px solid #000; padding-bottom:10px;">
+                <h2 style="margin:0;">SLIP GURU GANTI (RELIEF)</h2>
+                <p>Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b></p>
+                <p>Guru Tidak Hadir: <b>${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}</b></p>
             </div>
             <table class="data-table">
                 <thead>
-                    <tr><th>Waktu</th><th>Kelas</th><th>Subjek</th><th>Guru Ganti</th></tr>
+                    <tr><th>Waktu</th><th>Kelas</th><th>Subjek</th><th>Guru Ganti Dilantik</th></tr>
                 </thead>
                 <tbody>`;
 
     slotsToReplace.forEach(item => {
         let candidates = findEligibleRelief(item.slotIndex, selectedDay, teacherSchedules);
+        
+        // Filter: Buang guru yang tidak hadir & yang blacklist (canRelief === false)
         candidates = candidates.filter(c => c.id !== absentTeacherId);
+
+        // Agihan adil
         candidates.sort((a, b) => (b.isEligible - a.isEligible) || (dailyReliefCount[a.id] - dailyReliefCount[b.id]));
 
         const selected = candidates[0];
         if (selected) dailyReliefCount[selected.id]++;
 
-        // PAPAR MASA SEBENAR (Contoh: Slot 1 -> 07:30 - 08:00)
-        const timeStr = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
+        // TUKAR SLOT KE MASA (Contoh: Slot 1 -> 07:30)
+        const displayTime = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
 
         html += `
             <tr>
-                <td style="text-align:center;"><b>${timeStr}</b></td>
+                <td style="text-align:center;"><b>${displayTime}</b></td>
                 <td style="text-align:center;">${item.classId}</td>
                 <td style="text-align:center;">${item.subject}</td>
                 <td>${selected ? `<b>${selected.name}</b> <br><small>(${selected.reason})</small>` : 'TIADA GURU'}</td>
@@ -244,7 +277,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     });
 
     html += `</tbody></table>
-            <button onclick="window.print()" class="btn-print no-print" style="margin-top:10px;">🖨️ Cetak Slip Relief</button>
+            <button onclick="window.print()" class="btn-print no-print" style="margin-top:15px; width:100%; padding:10px;">🖨️ Cetak Slip Relief</button>
         </div>`;
 
     resultArea.innerHTML = html;
@@ -269,7 +302,7 @@ function mapSchedulesByTeacher(allTimetables) {
                     const idx = parseInt(slotKey) - 1;
                     const tId = slot.teacherId || slot.teacher;
                     if (tId && map[tId] && map[tId][day]) {
-                        map[tId][day][idx] = { classId, subjectId: slot.subjectId };
+                        map[tId][day][idx] = { classId, subjectId: slot.subjectId || slot.subject };
                     }
                 });
             }
@@ -281,11 +314,19 @@ function mapSchedulesByTeacher(allTimetables) {
 function findEligibleRelief(slotIdx, day, teacherSchedules) {
     let results = [];
     teachersList.forEach(t => {
+        // Logik Blacklist: Abaikan guru jika canRelief ditanda false
+        if (t.canRelief === false) return;
+
         const schedule = teacherSchedules[t.id]?.[day];
         if (!schedule || schedule[slotIdx] !== null) return;
-        let isEligible = !(slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]);
-        results.push({ id: t.id, name: t.name, isEligible, reason: isEligible ? "Masa Kosong" : "2 Jam Berturut" });
+
+        let isEligible = true;
+        let reason = "Masa Kosong";
+        if (slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]) {
+            isEligible = false;
+            reason = "2 Jam Berturut";
+        }
+        results.push({ id: t.id, name: t.name, isEligible, reason });
     });
     return results;
 }
-
