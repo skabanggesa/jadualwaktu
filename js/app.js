@@ -28,6 +28,21 @@ let subjectsList = [];
 let classesList = [];
 let localAssignments = [];
 
+// --- [PENAMBAHBAIKAN 1: PEMETAAN MASA] ---
+const timeMapping = {
+    "1": "07:10 - 07:40",
+    "2": "07:40 - 08:10",
+    "3": "08:10 - 09:40",
+    "4": "08:40 - 09:10",
+    "5": "09:10 - 9:40",
+    "6": "9:00 - 10:00",
+    "7": "10:00 - 10:30",
+    "8": "10:30 - 11:00",
+    "9": "11:00 - 11:30",
+    "10": "11:30 - 12:00",
+    "11": "12:00 - 12:30"
+};
+
 const clean = (str) => {
     if (!str) return "";
     return str.trim().replace(/\s+/g, '');
@@ -99,7 +114,19 @@ document.getElementById('btnSaveTeacher').onclick = () => {
     const id = document.getElementById('regTeacherId').value;
     const name = document.getElementById('regTeacherName').value;
     const short = document.getElementById('regTeacherShort').value.toUpperCase();
-    if(id && name) saveMasterData("teachers", id, { name, shortform: short });
+    
+    // --- [PENAMBAHBAIKAN 2: FUNGSI PENGECUALIAN] ---
+    // Kita tambah status 'canRelief' (default true). 
+    // Anda boleh tambah checkbox di HTML untuk set ini secara manual.
+    const canRelief = true; 
+
+    if(id && name) {
+        saveMasterData("teachers", id, { 
+            name, 
+            shortform: short,
+            canRelief: canRelief 
+        });
+    }
 };
 
 document.getElementById('btnSaveSubject').onclick = () => {
@@ -178,7 +205,6 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         return alert("Sila pilih guru dan tarikh ketidakhadiran.");
     }
 
-    // Tukar tarikh ke nama hari (Isnin, Selasa, etc.)
     const dateObj = new Date(reliefDateVal);
     const dayNames = ["Ahad", "Isnin", "Selasa", "Rabu", "Khamis", "Jumaat", "Sabtu"];
     const selectedDay = dayNames[dateObj.getDay()];
@@ -196,7 +222,6 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
 
     const teacherSchedules = mapSchedulesByTeacher(allTimetables);
     
-    // Track jumlah slot relief yang diberikan kepada setiap guru hari ini untuk agihan adil
     const dailyReliefCount = {};
     teachersList.forEach(t => dailyReliefCount[t.id] = 0);
 
@@ -223,7 +248,6 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         return;
     }
 
-    // Susun mengikut urutan slot
     slotsToReplace.sort((a, b) => a.slotIndex - b.slotIndex);
 
     let html = `<div id="printableReliefArea" class="relief-print-wrapper">
@@ -235,9 +259,9 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th width="15%">Waktu</th>
+                            <th width="20%">Waktu</th>
                             <th width="15%">Kelas</th>
-                            <th width="20%">Subjek Asal</th>
+                            <th width="15%">Subjek Asal</th>
                             <th width="50%">Guru Ganti Dilantik</th>
                         </tr>
                     </thead>
@@ -246,20 +270,21 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     slotsToReplace.forEach(item => {
         let candidates = findEligibleRelief(item.slotIndex, selectedDay, teacherSchedules);
         
-        // Filter: Buang guru yang tidak hadir dari senarai calon
         candidates = candidates.filter(c => c.id !== absentTeacherId);
 
-        // Agihan Adil: Susun mengikut Kelayakan (isEligible) dahulu, kemudian ikut siapa paling sedikit dapat relief hari ini
         candidates.sort((a, b) => {
             if (a.isEligible !== b.isEligible) return b.isEligible - a.isEligible;
             return dailyReliefCount[a.id] - dailyReliefCount[b.id];
         });
 
-        const selected = candidates[0]; // Ambil calon terbaik
+        const selected = candidates[0];
         if (selected) dailyReliefCount[selected.id]++;
 
+        // --- [PENGGUNAAN PEMETAAN MASA DI SINI] ---
+        const timeDisplay = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
+
         html += `<tr>
-            <td style="text-align:center;">Slot ${item.slotKey}</td>
+            <td style="text-align:center;"><b>${timeDisplay}</b></td>
             <td style="text-align:center;"><b>${item.classId}</b></td>
             <td style="text-align:center;">${item.subject}</td>
             <td>
@@ -319,13 +344,16 @@ function mapSchedulesByTeacher(allTimetables) {
 function findEligibleRelief(slotIdx, day, teacherSchedules) {
     let results = [];
     teachersList.forEach(t => {
+        // --- [PENAMBAHBAIKAN 2: LOGIK PENGECUALIAN] ---
+        // Jika guru ditanda tidak boleh relief dalam pangkalan data, abaikan mereka.
+        if (t.canRelief === false) return;
+
         const schedule = teacherSchedules[t.id]?.[day];
         if (!schedule) return;
-        if (schedule[slotIdx] !== null) return; // Guru ada kelas sendiri
+        if (schedule[slotIdx] !== null) return; 
 
         let isEligible = true;
         let reason = "Masa Kosong";
-        // Logik Rehat Wajib: Jika sudah mengajar 2 jam (slot) berturut-turut sebelum ini
         if (slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]) {
             isEligible = false;
             reason = "Penat (2 Jam Berturut-turut)";
@@ -348,7 +376,7 @@ window.printRelief = () => {
                 table { width: 100%; border-collapse: collapse; margin-top: 20px; }
                 th, td { border: 1px solid #333; padding: 12px; text-align: left; }
                 th { background-color: #f2f2f2 !important; -webkit-print-color-adjust: exact; }
-                .status-badge { display: none; } /* Sembunyikan badge status masa cetak untuk kekemasan */
+                .status-badge { display: none; }
             }
         </style>
     `;
@@ -356,5 +384,5 @@ window.printRelief = () => {
     document.body.innerHTML = printStyle + printContents;
     window.print();
     document.body.innerHTML = originalContents;
-    window.location.reload(); // Reload untuk mengaktifkan semula semua event listeners JavaScript
+    window.location.reload(); 
 };
