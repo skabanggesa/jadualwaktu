@@ -6,11 +6,10 @@
 import { db } from "./firebase-config.js";
 import { doc, getDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-// --- STATE GLOBAL ---
 let currentTimetableData = {}; 
 let teacherMapGlobal = {};     
 let allTimetablesCache = {};  
-let currentAssignments = []; // Simpan assignments secara global untuk kemaskini status
+let currentAssignments = []; 
 
 export function getCurrentTimetableData() {
     return currentTimetableData;
@@ -46,7 +45,6 @@ export async function renderTimetableGrid(containerId, classId) {
     const container = document.getElementById(containerId);
     if (!classId) return;
 
-    // Ambil data dari Firestore hanya sekali semasa mula
     const [docSnap, teacherSnap, allSnaps, assignSnap] = await Promise.all([
         getDoc(doc(db, "timetables", classId)),
         getDocs(collection(db, "teachers")),
@@ -64,17 +62,11 @@ export async function renderTimetableGrid(containerId, classId) {
     allSnaps.forEach(d => { allTimetablesCache[d.id] = d.data(); });
 
     currentTimetableData = docSnap.exists() ? docSnap.data() : {};
-    
-    // Simpan assignments untuk kegunaan renderStatus kemudian
-    currentAssignments = assignSnap.docs
-        .map(d => d.data())
-        .filter(a => a.classId === classId);
+    currentAssignments = assignSnap.docs.map(d => d.data()).filter(a => a.classId === classId);
 
-    // Lukis grid buat kali pertama
     refreshUI(containerId, classId);
 }
 
-// Fungsi pembantu untuk melukis semula Grid + Status tanpa fetch database
 function refreshUI(containerId, classId) {
     drawGrid(containerId, classId);
     renderStatus(containerId, currentAssignments);
@@ -86,29 +78,37 @@ function drawGrid(containerId, classId) {
     const times = { 
         1:"07:10", 2:"07:40", 3:"08:10", 4:"08:40", 5:"09:10", 
         "REHAT":"09:40",
-        6:"10:00", 7:"10:30", 8:"11:00", 9:"11:30" 
+        6:"10:00", 7:"10:30", 8:"11:00", 9:"11:30", 10:"12:00" 
     };
 
-    let html = `<table class="timetable-table" style="width:100%; border-collapse:collapse;">
+    const isTahap2 = ["4", "5", "6"].includes(classId.charAt(0));
+
+    let html = `<table class="timetable-table" style="width:100%; border-collapse:collapse; font-size: 0.85rem;">
         <thead>
             <tr style="background:#f1f5f9;">
                 <th style="padding:10px; border:1px solid #cbd5e1;">Hari / Masa</th>`;
     
-    for (let i = 1; i <= 9; i++) {
+    // Tentukan adakah lajur ke-10 perlu dilukis di header
+    const maxCols = isTahap2 ? 10 : 9;
+    for (let i = 1; i <= maxCols; i++) {
         html += `<th style="padding:5px; border:1px solid #cbd5e1; text-align:center;">
                     ${i}<br><small style="color:#64748b;">${times[i]}</small>
                  </th>`;
         if (i === 5) {
-            html += `<th style="background:#e2e8f0; border:1px solid #cbd5e1; width:30px;">REHAT</th>`;
+            html += `<th style="background:#e2e8f0; border:1px solid #cbd5e1; width:30px; font-size:0.6rem;">REHAT</th>`;
         }
     }
     html += `</tr></thead><tbody>`;
 
     days.forEach(day => {
-        let limit = (day === "Jumaat") ? 8 : 9;
+        // Tentukan limit slot untuk hari ini
+        let limit = 9;
+        if (day === "Jumaat") limit = 8;
+        else if (isTahap2 && ["Isnin", "Selasa", "Rabu"].includes(day)) limit = 10;
+
         html += `<tr><td style="padding:10px; border:1px solid #cbd5e1; font-weight:bold; background:#f8fafc;">${day}</td>`;
         
-        for (let s = 1; s <= 9; s++) {
+        for (let s = 1; s <= maxCols; s++) {
             const item = currentTimetableData[day]?.[s];
             let cellContent = "", bgColor = "#ffffff", isDraggable = false;
 
@@ -123,12 +123,13 @@ function drawGrid(containerId, classId) {
                 </div>`;
             }
 
-            const cellStyle = `background-color:${bgColor}; border:1px solid #cbd5e1; text-align:center; height:55px; vertical-align:middle; padding:2px; cursor:${isDraggable ? 'grab' : 'default'};`;
+            const cellStyle = `background-color:${bgColor}; border:1px solid #cbd5e1; text-align:center; height:55px; vertical-align:middle; padding:2px;`;
 
             if (s > limit) {
-                html += `<td style="${cellStyle} background:#f1f5f9;"></td>`;
+                // Sel kosong jika slot melebihi had hari tersebut
+                html += `<td style="${cellStyle} background:#f1f5f9; opacity:0.3;"></td>`;
             } else {
-                html += `<td class="slot-cell" data-day="${day}" data-slot="${s}" style="${cellStyle}"
+                html += `<td class="slot-cell" data-day="${day}" data-slot="${s}" style="${cellStyle} cursor:${isDraggable ? 'grab' : 'default'};"
                     draggable="${isDraggable}" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)"
                     ondrop="handleDrop(event, '${containerId}', '${classId}')">${cellContent}</td>`;
             }
@@ -156,8 +157,9 @@ function renderStatus(containerId, assigns) {
             });
         });
         const required = a.periods || a.totalSlots;
-        const color = count < required ? '#e11d48' : '#16a34a';
-        const bgColor = count < required ? '#fff1f2' : '#f0fdf4';
+        const isComplete = count >= required;
+        const color = isComplete ? '#16a34a' : '#e11d48';
+        const bgColor = isComplete ? '#f0fdf4' : '#fff1f2';
 
         statusHtml += `<span style="background:${bgColor}; border:1px solid ${color}; color:${color}; padding:4px 8px; border-radius:5px; font-size:0.7rem; font-weight:600;">
             ${a.subjectId}: ${count}/${required}
@@ -166,7 +168,7 @@ function renderStatus(containerId, assigns) {
     container.innerHTML += statusHtml + `</div></div>`;
 }
 
-// --- DRAG & DROP HANDLERS (STABIL) ---
+// DRAG & DROP
 window.handleDragStart = (e) => {
     const cell = e.target.closest(".slot-cell");
     if(cell) {
@@ -176,9 +178,7 @@ window.handleDragStart = (e) => {
     }
 };
 
-window.handleDragOver = (e) => {
-    e.preventDefault();
-};
+window.handleDragOver = (e) => e.preventDefault();
 
 window.handleDrop = async (e, containerId, classId) => {
     e.preventDefault();
@@ -191,33 +191,26 @@ window.handleDrop = async (e, containerId, classId) => {
     const toDay = targetCell.dataset.day;
     const toSlot = parseInt(targetCell.dataset.slot);
 
-    // Jika drop di tempat yang sama, abaikan
     if (fromDay === toDay && fromSlot === toSlot) return;
 
     const itemToMove = currentTimetableData[fromDay]?.[fromSlot];
     const itemAtTarget = currentTimetableData[toDay]?.[toSlot];
 
-    // Semak pertembungan guru di lokasi baru
     if (itemToMove) {
         const conflict = await checkTeacherConflict(itemToMove.teacherId, toDay, toSlot, classId);
-        if (conflict) {
-            if (!confirm(`AMARAN: Guru [${conflict.teacherName}] sudah ada kelas di [${conflict.classId}]. Teruskan?`)) {
-                refreshUI(containerId, classId); // Reset opacity
-                return;
-            }
+        if (conflict && !confirm(`Guru [${conflict.teacherName}] sibuk di [${conflict.classId}]. Teruskan?`)) {
+            refreshUI(containerId, classId);
+            return;
         }
     }
 
-    // LAKUKAN SWAP SECARA LOKAL
     if (!currentTimetableData[fromDay]) currentTimetableData[fromDay] = {};
     if (!currentTimetableData[toDay]) currentTimetableData[toDay] = {};
 
     currentTimetableData[fromDay][fromSlot] = itemAtTarget || null;
     currentTimetableData[toDay][toSlot] = itemToMove;
 
-    // Padam property jika null supaya database bersih
     if (!currentTimetableData[fromDay][fromSlot]) delete currentTimetableData[fromDay][fromSlot];
 
-    // Refresh UI tanpa fetch database (Kunci kejayaan Drag & Drop)
     refreshUI(containerId, classId);
 };
