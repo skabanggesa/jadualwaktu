@@ -18,16 +18,18 @@ let timetableResult = {}, teacherDailyLoad = {};
  * Memulakan proses penjanaan jadual.
  */
 export async function startGenerating() {
-    console.log("Menjana Jadual dengan Logik PAI/PM, Co-Teaching & Had Masa PJ...");
+    console.log("Menjana Jadual: Mengoptimumkan pengisian waktu...");
     timetableResult = {}; 
     teacherDailyLoad = {};
     
     try {
         await fetchData();
+        
+        // Isih kelas supaya penjanaan lebih adil (optional)
         for (const cls of classesList) {
             let classAssigns = [...assignments.filter(a => a.classId === cls.id)];
             
-            // --- 0. LOGIK GABUNGAN CO-TEACHING (Sama Subjek, Guru Berbeza) ---
+            // --- 0. LOGIK GABUNGAN CO-TEACHING ---
             const groupedBySubject = {};
             classAssigns.forEach(a => {
                 const sid = a.subjectId;
@@ -54,11 +56,9 @@ export async function startGenerating() {
                 );
                 
                 let pmSlotsRemaining = pmTask.periods || pmTask.totalSlots;
-
                 piTasks.forEach(pi => {
                     const piSlots = pi.periods || pi.totalSlots;
                     const slotsToMerge = Math.min(piSlots, pmSlotsRemaining);
-                    
                     if (slotsToMerge > 0) {
                         classAssigns.push({
                             subjectId: `${pi.subjectId} / PM`,
@@ -71,7 +71,6 @@ export async function startGenerating() {
                         pmSlotsRemaining -= slotsToMerge;
                     }
                 });
-                
                 if (pmSlotsRemaining > 0) {
                     classAssigns.push({ ...pmTask, totalSlots: pmSlotsRemaining });
                 }
@@ -82,7 +81,7 @@ export async function startGenerating() {
         }
         
         await saveToCloud();
-        alert("Jadual Waktu Berjaya Dijana! Subjek PJ telah ditetapkan pada slot pagi.");
+        alert("Jadual Berjaya Dijana! Semakan jumlah waktu dilakukan.");
     } catch (e) { 
         console.error("Ralat Penjanaan:", e); 
         alert("Gagal menjana jadual: " + e.message); 
@@ -106,24 +105,36 @@ async function generateClassGrid(classId, classAssigns) {
     const grid = {};
     DAYS.forEach(d => grid[d] = {});
     
+    // 1. Perhimpunan
     grid["Rabu"][1] = { subjectId: "PERHIMPUNAN", teacherId: "SEMUA" };
 
-    let queue = classAssigns.map(a => ({ ...a, left: (a.periods || a.totalSlots) }))
-                .sort((a, b) => (b.isDouble ? 1 : 0) - (a.isDouble ? 1 : 0));
+    let queue = classAssigns.map(a => ({ 
+        ...a, 
+        left: parseInt(a.periods || a.totalSlots || 0) 
+    })).sort((a, b) => (b.isDouble ? 1 : 0) - (a.isDouble ? 1 : 0));
 
+    // Iterasi berperingkat untuk memastikan pengisian maksimum
     let safety = 0;
-    while (queue.some(a => a.left > 0) && safety < 1000) {
+    while (queue.some(a => a.left > 0) && safety < 50) {
         safety++;
         for (let day of DAYS) {
             for (let a of queue) {
                 if (a.left <= 0) continue;
-                
-                let usedToday = Object.values(grid[day]).filter(s => s.subjectId === a.subjectId).length;
-                if (usedToday >= 3) continue;
 
+                // Had harian: Maksimum 3 slot subjek sama sehari kecuali BM/BI yang banyak waktu
+                let maxPerDay = (a.subjectId.includes("BM") || a.subjectId.includes("BI")) ? 4 : 3;
+                let usedToday = Object.values(grid[day]).filter(s => s.subjectId === a.subjectId).length;
+                if (usedToday >= maxPerDay) continue;
+
+                // CUBA 1: Slot Berkembar (jika isDouble)
                 let size = (a.isDouble && a.left >= 2) ? 2 : 1;
-                // Masukkan a.subjectId ke dalam fungsi findSlot
                 let slot = findSlot(grid[day], day, size, a.teacherId, classId, a.subjectId);
+
+                // CUBA 2: Jika Double gagal, cuba slot tunggal (Fallback)
+                if (slot === -1 && size === 2) {
+                    size = 1;
+                    slot = findSlot(grid[day], day, size, a.teacherId, classId, a.subjectId);
+                }
 
                 if (slot !== -1) {
                     for (let i = 0; i < size; i++) {
@@ -144,18 +155,19 @@ async function generateClassGrid(classId, classAssigns) {
 
 function findSlot(dayGrid, day, size, tId, cId, sId) {
     let max = MAX_SLOTS[day];
-
-    // PENAMBAHBAIKAN: Hadkan PJ sehingga Slot 5 (9:10 Pagi)
+    
+    // Kekangan PJ: Mesti Pagi (Slot 1-5)
     if (sId && sId.toUpperCase().includes("PJ")) {
         max = 5; 
     }
 
     for (let s = 1; s <= max - (size - 1); s++) {
+        // Langkau waktu rehat (Slot 6)
         if (s === 6 || (s < 6 && s + size > 6)) continue; 
 
         let free = true;
         for (let i = 0; i < size; i++) {
-            if (dayGrid[s + i] || !isTeacherFree(tId, day, s + i)) {
+            if (dayGrid[s + i] || !isTeacherFree(tId, day, s + i, cId)) {
                 free = false; 
                 break;
             }
@@ -165,11 +177,12 @@ function findSlot(dayGrid, day, size, tId, cId, sId) {
     return -1;
 }
 
-function isTeacherFree(tId, day, slot) {
+function isTeacherFree(tId, day, slot, currentClassId) {
     if (tId === "SEMUA") return true;
     const incomingTeachers = tId.split('/');
     
     for (let classId in timetableResult) {
+        // Kita hanya semak pertembungan di kelas LAIN
         const cell = timetableResult[classId][day]?.[slot];
         if (cell && cell.teacherId) {
             const existingTeachers = cell.teacherId.split('/');
