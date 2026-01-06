@@ -1,17 +1,17 @@
 /**
  * SISTEM PENGURUSAN JADUAL WAKTU (ASG VER 1.0)
  * Fail: ui-render.js
- * Status: DIKEMASKINI (Paparan Rehat Dibaiki)
  */
 
 import { db } from "./firebase-config.js";
 import { doc, getDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+// --- STATE GLOBAL ---
 let currentTimetableData = {}; 
 let teacherMapGlobal = {};     
 let allTimetablesCache = {};  
+let currentAssignments = []; // Simpan assignments secara global untuk kemaskini status
 
-// EKSPORE WAJIB UNTUK app.js
 export function getCurrentTimetableData() {
     return currentTimetableData;
 }
@@ -46,6 +46,7 @@ export async function renderTimetableGrid(containerId, classId) {
     const container = document.getElementById(containerId);
     if (!classId) return;
 
+    // Ambil data dari Firestore hanya sekali semasa mula
     const [docSnap, teacherSnap, allSnaps, assignSnap] = await Promise.all([
         getDoc(doc(db, "timetables", classId)),
         getDocs(collection(db, "teachers")),
@@ -63,43 +64,50 @@ export async function renderTimetableGrid(containerId, classId) {
     allSnaps.forEach(d => { allTimetablesCache[d.id] = d.data(); });
 
     currentTimetableData = docSnap.exists() ? docSnap.data() : {};
-    drawGrid(containerId, classId);
     
-    const classAssigns = assignSnap.docs.map(d => d.data()).filter(a => a.classId === classId);
-    renderStatus(containerId, classAssigns);
+    // Simpan assignments untuk kegunaan renderStatus kemudian
+    currentAssignments = assignSnap.docs
+        .map(d => d.data())
+        .filter(a => a.classId === classId);
+
+    // Lukis grid buat kali pertama
+    refreshUI(containerId, classId);
+}
+
+// Fungsi pembantu untuk melukis semula Grid + Status tanpa fetch database
+function refreshUI(containerId, classId) {
+    drawGrid(containerId, classId);
+    renderStatus(containerId, currentAssignments);
 }
 
 function drawGrid(containerId, classId) {
     const container = document.getElementById(containerId);
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
-    // Masa dikemaskini untuk memasukkan waktu rehat yang jelas
     const times = { 
-        1:"07:10-07:40", 2:"07:40-08:10", 3:"08:10-08:40", 4:"08:40-09:10", 5:"09:10-09:40", 
-        "REHAT":"09:40-10:00",
-        6:"10:00-10:30", 7:"10:30-11:00", 8:"11:00-11:30", 9:"11:30-12:00" 
+        1:"07:10", 2:"07:40", 3:"08:10", 4:"08:40", 5:"09:10", 
+        "REHAT":"09:40",
+        6:"10:00", 7:"10:30", 8:"11:00", 9:"11:30" 
     };
 
-    let html = `<table class="timetable-table" style="width:100%; border-collapse:collapse; font-family: sans-serif;">
+    let html = `<table class="timetable-table" style="width:100%; border-collapse:collapse;">
         <thead>
-            <tr style="background:#e2e8f0; color:#334155;">
-                <th style="padding:8px; border:1px solid #cbd5e1;">Hari / Masa</th>`;
+            <tr style="background:#f1f5f9;">
+                <th style="padding:10px; border:1px solid #cbd5e1;">Hari / Masa</th>`;
     
     for (let i = 1; i <= 9; i++) {
-        html += `<th style="padding:4px; border:1px solid #cbd5e1; text-align:center;">
-                    Slot ${i}<br><small style="font-size:0.65rem; color:#475569;">${times[i]}</small>
+        html += `<th style="padding:5px; border:1px solid #cbd5e1; text-align:center;">
+                    ${i}<br><small style="color:#64748b;">${times[i]}</small>
                  </th>`;
-        // HEADER REHAT YANG LEBIH KEMAS
         if (i === 5) {
-            html += `<th class="rehat-col" style="background:#cbd5e1; color:#334155; border:1px solid #94a3b8; text-align:center; vertical-align:middle; width: 40px;">
-                        REHAT<br><small style="font-size:0.6rem;">${times["REHAT"]}</small>
-                     </th>`;
+            html += `<th style="background:#e2e8f0; border:1px solid #cbd5e1; width:30px;">REHAT</th>`;
         }
     }
     html += `</tr></thead><tbody>`;
 
     days.forEach(day => {
         let limit = (day === "Jumaat") ? 8 : 9;
-        html += `<tr><td style="padding:8px; border:1px solid #cbd5e1; font-weight:bold; background:#f1f5f9;">${day}</td>`;
+        html += `<tr><td style="padding:10px; border:1px solid #cbd5e1; font-weight:bold; background:#f8fafc;">${day}</td>`;
+        
         for (let s = 1; s <= 9; s++) {
             const item = currentTimetableData[day]?.[s];
             let cellContent = "", bgColor = "#ffffff", isDraggable = false;
@@ -109,28 +117,24 @@ function drawGrid(containerId, classId) {
                 bgColor = getSubjectColor(item.subjectId);
                 const tNames = item.teacherId.split("/").map(id => teacherMapGlobal[id] || id).join("/");
                 
-                // Gaya font yang lebih kemas
-                const subFontSize = item.subjectId.length > 10 || tNames.length > 15 ? "0.65rem" : "0.75rem";
-                
-                cellContent = `<div class="cell-box" style="display:flex; flex-direction:column; justify-content:center; height:100%;">
-                    <span class="subject-name" style="font-weight:800; font-size:${subFontSize}; line-height:1.1; margin-bottom:2px;">${item.subjectId}</span>
-                    <span class="teacher-name" style="font-size:0.6rem; color:#4b5563; line-height:1;">${tNames}</span>
+                cellContent = `<div style="display:flex; flex-direction:column; justify-content:center; pointer-events:none;">
+                    <span style="font-weight:bold; font-size:0.75rem;">${item.subjectId}</span>
+                    <span style="font-size:0.6rem; color:#475569;">${tNames}</span>
                 </div>`;
             }
 
-            const cellStyle = `background-color:${bgColor}; border:1px solid #cbd5e1; text-align:center; height:55px; vertical-align:middle; padding:2px;`;
+            const cellStyle = `background-color:${bgColor}; border:1px solid #cbd5e1; text-align:center; height:55px; vertical-align:middle; padding:2px; cursor:${isDraggable ? 'grab' : 'default'};`;
 
             if (s > limit) {
-                html += `<td style="${cellStyle} background:#f1f5f9; opacity:0.5;"></td>`;
+                html += `<td style="${cellStyle} background:#f1f5f9;"></td>`;
             } else {
                 html += `<td class="slot-cell" data-day="${day}" data-slot="${s}" style="${cellStyle}"
                     draggable="${isDraggable}" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)"
                     ondrop="handleDrop(event, '${containerId}', '${classId}')">${cellContent}</td>`;
             }
 
-            // SEL REHAT YANG LEBIH KEMAS (Bukan sekadar "R")
             if (s === 5) {
-                html += `<td class="rehat-cell" style="background:#e2e8f0; border:1px solid #94a3b8; font-weight:bold; text-align:center; vertical-align:middle; color:#475569; font-size:0.7rem; writing-mode: vertical-lr; transform: rotate(180deg);">REHAT</td>`;
+                html += `<td style="background:#f1f5f9; border:1px solid #cbd5e1; text-align:center; vertical-align:middle; color:#64748b; font-weight:bold; font-size:0.65rem; writing-mode:vertical-lr; transform:rotate(180deg);">REHAT</td>`;
             }
         }
         html += `</tr>`;
@@ -140,44 +144,40 @@ function drawGrid(containerId, classId) {
 
 function renderStatus(containerId, assigns) {
     const container = document.getElementById(containerId);
-    let statusHtml = `<div style="margin-top:15px; padding:10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">
-        <h5 style="margin:0 0 8px 0; color:#334155; font-size:0.9rem;">Status Pengisian Waktu:</h5>
-        <div style="display:flex; flex-wrap:wrap; gap:6px;">`;
+    let statusHtml = `<div style="margin-top:15px; padding:12px; background:#fff; border:1px solid #e2e8f0; border-radius:8px;">
+        <h5 style="margin:0 0 10px 0; color:#1e293b;">Semakan Jumlah Waktu:</h5>
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">`;
     
     assigns.forEach(a => {
         let count = 0;
         Object.values(currentTimetableData).forEach(day => {
             Object.values(day).forEach(slot => {
-                if (slot.subjectId === a.subjectId) count++;
+                if (slot && slot.subjectId === a.subjectId) count++;
             });
         });
         const required = a.periods || a.totalSlots;
-        const isComplete = count >= required;
-        const color = isComplete ? '#16a34a' : '#dc2626';
-        const bgColor = isComplete ? '#dcfce7' : '#fee2e2';
+        const color = count < required ? '#e11d48' : '#16a34a';
+        const bgColor = count < required ? '#fff1f2' : '#f0fdf4';
 
-        statusHtml += `<span style="background:${bgColor}; border:1px solid ${color}; color:${color}; padding:3px 6px; border-radius:4px; font-size:0.75rem; font-weight:600;">
+        statusHtml += `<span style="background:${bgColor}; border:1px solid ${color}; color:${color}; padding:4px 8px; border-radius:5px; font-size:0.7rem; font-weight:600;">
             ${a.subjectId}: ${count}/${required}
         </span>`;
     });
     container.innerHTML += statusHtml + `</div></div>`;
 }
 
-// Global Drag Handlers
+// --- DRAG & DROP HANDLERS (STABIL) ---
 window.handleDragStart = (e) => {
     const cell = e.target.closest(".slot-cell");
     if(cell) {
         e.dataTransfer.setData("fromDay", cell.dataset.day);
         e.dataTransfer.setData("fromSlot", cell.dataset.slot);
-        cell.style.opacity = '0.4';
+        cell.style.opacity = '0.5';
     }
 };
 
-window.handleDragOver = (e) => e.preventDefault();
-
-window.handleDragEnd = (e) => {
-      const cell = e.target.closest(".slot-cell");
-      if(cell) cell.style.opacity = '1';
+window.handleDragOver = (e) => {
+    e.preventDefault();
 };
 
 window.handleDrop = async (e, containerId, classId) => {
@@ -185,25 +185,39 @@ window.handleDrop = async (e, containerId, classId) => {
     const fromDay = e.dataTransfer.getData("fromDay");
     const fromSlot = parseInt(e.dataTransfer.getData("fromSlot"));
     const targetCell = e.target.closest(".slot-cell");
+    
     if (!targetCell) return;
 
-    const toDay = targetCell.dataset.day, toSlot = parseInt(targetCell.dataset.slot);
+    const toDay = targetCell.dataset.day;
+    const toSlot = parseInt(targetCell.dataset.slot);
+
+    // Jika drop di tempat yang sama, abaikan
     if (fromDay === toDay && fromSlot === toSlot) return;
 
     const itemToMove = currentTimetableData[fromDay]?.[fromSlot];
     const itemAtTarget = currentTimetableData[toDay]?.[toSlot];
 
+    // Semak pertembungan guru di lokasi baru
     if (itemToMove) {
         const conflict = await checkTeacherConflict(itemToMove.teacherId, toDay, toSlot, classId);
-        if (conflict && !confirm(`Guru [${conflict.teacherName}] sibuk di [${conflict.classId}]. Teruskan?`)) return;
+        if (conflict) {
+            if (!confirm(`AMARAN: Guru [${conflict.teacherName}] sudah ada kelas di [${conflict.classId}]. Teruskan?`)) {
+                refreshUI(containerId, classId); // Reset opacity
+                return;
+            }
+        }
     }
 
+    // LAKUKAN SWAP SECARA LOKAL
     if (!currentTimetableData[fromDay]) currentTimetableData[fromDay] = {};
     if (!currentTimetableData[toDay]) currentTimetableData[toDay] = {};
-    currentTimetableData[fromDay][fromSlot] = itemAtTarget;
+
+    currentTimetableData[fromDay][fromSlot] = itemAtTarget || null;
     currentTimetableData[toDay][toSlot] = itemToMove;
-    
-    renderTimetableGrid(containerId, classId);
+
+    // Padam property jika null supaya database bersih
+    if (!currentTimetableData[fromDay][fromSlot]) delete currentTimetableData[fromDay][fromSlot];
+
+    // Refresh UI tanpa fetch database (Kunci kejayaan Drag & Drop)
+    refreshUI(containerId, classId);
 };
-// Tambah event listener untuk dragend
-document.addEventListener('dragend', window.handleDragEnd);
