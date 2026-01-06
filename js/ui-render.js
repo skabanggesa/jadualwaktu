@@ -1,7 +1,6 @@
 /**
  * SISTEM PENGURUSAN JADUAL WAKTU (ASG VER 1.0)
  * Fail: ui-render.js
- * Peranan: Menguruskan paparan grid, Drag & Drop, dan Semakan Pertindihan (Multi-Teacher).
  */
 
 import { db } from "./firebase-config.js";
@@ -21,15 +20,10 @@ export function getCurrentTimetableData() {
     return currentTimetableData;
 }
 
-/**
- * Fungsi warna subjek (Ditambah sokongan untuk mengesan subjek gabungan)
- */
 function getSubjectColor(subjectId) {
     if (!subjectId) return "#ffffff";
     const sub = subjectId.toUpperCase();
-    
-    // Jika PAI / PM, gunakan warna cerun (gradient) atau warna neutral yang unik
-    if (sub.includes("PAI") && sub.includes("PM")) return "#e2e8f0"; 
+    if (sub.includes("/") && (sub.includes("PI") || sub.includes("PM"))) return "#e2e8f0"; 
 
     const colorMap = {
         "BM": "#ffadad", "BI": "#a0c4ff", "MT": "#b9fbc0", "SN": "#bdb2ff",
@@ -44,27 +38,18 @@ function getSubjectColor(subjectId) {
     return "#f8fafc"; 
 }
 
-/**
- * SEMAKAN PERTINDIHAN (VERSI 2.0): Menyokong ID Guru Gabungan (contoh: "G1/G2")
- */
 async function checkTeacherConflict(teacherId, day, slot, currentClassId) {
     if (!teacherId || teacherId === "SEMUA") return null;
-
-    // Pecahkan ID guru yang ingin dipindahkan (boleh jadi satu atau ramai)
     const incomingTeachers = teacherId.split("/");
 
     for (const classId in allTimetablesCache) {
         if (classId === currentClassId) continue; 
-
         const timetable = allTimetablesCache[classId];
         const cell = timetable[day]?.[slot];
 
         if (cell && cell.teacherId) {
             const existingTeachers = cell.teacherId.split("/");
-            
-            // Cari jika ada mana-mana guru dalam senarai 'incoming' bertembung dengan 'existing'
             const clashingTeacher = incomingTeachers.find(id => existingTeachers.includes(id));
-            
             if (clashingTeacher) {
                 const name = teacherMapGlobal[clashingTeacher] || clashingTeacher;
                 return { classId, teacherName: name };
@@ -102,9 +87,6 @@ export async function renderTimetableGrid(containerId, classId) {
     drawGrid(containerId, classId);
 }
 
-/**
- * LUKIS GRID: Ditambah baik untuk paparan PAI/PM dan Co-Teaching
- */
 function drawGrid(containerId, classId) {
     const container = document.getElementById(containerId);
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
@@ -131,26 +113,21 @@ function drawGrid(containerId, classId) {
                 isDraggable = item.subjectId !== "PERHIMPUNAN";
                 bgColor = getSubjectColor(item.subjectId);
 
+                // Tukar ID Guru kepada Nama Pendek
+                const tIds = item.teacherId.split("/");
+                const teacherDisplay = tIds.map(id => teacherMapGlobal[id] || id).join("/");
+
                 if (item.subjectId === "PERHIMPUNAN") {
                     cellContent = `<span class="subject-name">PERHIMPUNAN</span>`;
-                } else if (item.subjectId.includes("/")) {
-                    // PAPARAN GABUNGAN (Parallel PAI/PM atau Co-Teaching)
-                    const subNames = item.subjectId.split("/");
-                    const tIds = item.teacherId.split("/");
-                    const tNames = tIds.map(id => teacherMapGlobal[id] || id).join("/");
+                } else {
+                    // Gunakan font lebih kecil jika subjek panjang atau ramai guru
+                    const isComplex = item.subjectId.includes("/") || tIds.length > 1;
+                    const subFontSize = isComplex ? "0.65rem" : "0.8rem";
 
                     cellContent = `
-                        <div class="cell-box dual-subject">
-                            <span class="subject-name" style="font-size: 0.65rem; color: #1e293b; font-weight:800;">${item.subjectId}</span>
-                            <span class="teacher-name" style="font-size: 0.55rem; color: #475569;">${tNames}</span>
-                        </div>`;
-                } else {
-                    // PAPARAN BIASA
-                    const tName = teacherMapGlobal[item.teacherId] || item.teacherId;
-                    cellContent = `
                         <div class="cell-box">
-                            <span class="subject-name" style="font-size: 0.8rem; font-weight: bold;">${item.subjectId}</span>
-                            <span class="teacher-name" style="font-size: 0.65rem;">${tName}</span>
+                            <span class="subject-name" style="font-size: ${subFontSize}; font-weight: bold;">${item.subjectId}</span>
+                            <span class="teacher-name" style="font-size: 0.55rem;">${teacherDisplay}</span>
                         </div>`;
                 }
             }
@@ -180,7 +157,6 @@ function drawGrid(containerId, classId) {
 }
 
 // --- PENGENDALI DRAG & DROP ---
-
 window.handleDragStart = (e) => {
     const cell = e.target.closest(".slot-cell");
     if (cell) {
@@ -190,47 +166,34 @@ window.handleDragStart = (e) => {
     }
 };
 
-window.handleDragOver = (e) => {
-    e.preventDefault(); 
-};
+window.handleDragOver = (e) => { e.preventDefault(); };
 
 window.handleDrop = async (e, containerId, classId) => {
     e.preventDefault();
-    
     const fromDay = e.dataTransfer.getData("fromDay");
     const fromSlot = parseInt(e.dataTransfer.getData("fromSlot"));
     const targetCell = e.target.closest(".slot-cell");
-    
     if (!targetCell) return;
 
     const toDay = targetCell.dataset.day;
     const toSlot = parseInt(targetCell.dataset.slot);
-
     if (fromDay === toDay && fromSlot === toSlot) return;
 
     const itemToMove = currentTimetableData[fromDay]?.[fromSlot];
     const itemAtTarget = currentTimetableData[toDay]?.[toSlot];
 
-    // --- SEMAK PERTINDIHAN SEBELUM SWAP ---
     if (itemToMove) {
         const conflict = await checkTeacherConflict(itemToMove.teacherId, toDay, toSlot, classId);
         if (conflict) {
-            const confirmMsg = `AMARAN PERTINDIHAN GURU!\n\n` +
-                               `Guru [${conflict.teacherName}] sudah mengajar di Kelas [${conflict.classId}] ` +
-                               `pada hari ${toDay} slot ${toSlot}.\n\n` +
-                               `Adakah anda pasti ingin meneruskan pertukaran?`;
-            if (!confirm(confirmMsg)) return;
+            if (!confirm(`AMARAN: Guru [${conflict.teacherName}] sudah mengajar di Kelas [${conflict.classId}]. Teruskan?`)) return;
         }
     }
 
-    // Lakukan Swap
     if (!currentTimetableData[fromDay]) currentTimetableData[fromDay] = {};
     if (!currentTimetableData[toDay]) currentTimetableData[toDay] = {};
-
     currentTimetableData[fromDay][fromSlot] = itemAtTarget;
     currentTimetableData[toDay][toSlot] = itemToMove;
 
-    // Bersihkan slot kosong
     if (!currentTimetableData[fromDay][fromSlot]) delete currentTimetableData[fromDay][fromSlot];
     if (!currentTimetableData[toDay][toSlot]) delete currentTimetableData[toDay][toSlot];
 
