@@ -18,7 +18,7 @@ let timetableResult = {}, teacherDailyLoad = {};
  * Memulakan proses penjanaan jadual.
  */
 export async function startGenerating() {
-    console.log("Menjana Jadual dengan Logik PAI/PM & Co-Teaching...");
+    console.log("Menjana Jadual dengan Logik PAI/PM, Co-Teaching & Had Masa PJ...");
     timetableResult = {}; 
     teacherDailyLoad = {};
     
@@ -28,14 +28,12 @@ export async function startGenerating() {
             let classAssigns = [...assignments.filter(a => a.classId === cls.id)];
             
             // --- 0. LOGIK GABUNGAN CO-TEACHING (Sama Subjek, Guru Berbeza) ---
-            // Menggabungkan guru yang mengajar subjek sama dalam satu kelas (e.g., PI(QURAN) oleh LAI dan KHU)
             const groupedBySubject = {};
             classAssigns.forEach(a => {
                 const sid = a.subjectId;
                 if (!groupedBySubject[sid]) {
                     groupedBySubject[sid] = { ...a };
                 } else {
-                    // Jika subjek sama, gabungkan teacherId (e.g., "LAI/KHU")
                     const currentTids = groupedBySubject[sid].teacherId.split('/');
                     if (!currentTids.includes(a.teacherId)) {
                         groupedBySubject[sid].teacherId += `/${a.teacherId}`;
@@ -45,12 +43,10 @@ export async function startGenerating() {
             classAssigns = Object.values(groupedBySubject);
 
             // --- 1. LOGIK GABUNGAN PI / PM (Parallel) ---
-            // Mencari tugasan yang mengandungi PI atau PM untuk digabungkan selari
             const piTasks = classAssigns.filter(a => a.subjectId.includes("PI") || a.subjectId.includes("PAI"));
             const pmTask = classAssigns.find(a => a.subjectId === "PM");
 
             if (piTasks.length > 0 && pmTask) {
-                // Keluarkan rekod asal untuk digantikan dengan versi gabungan (Parallel)
                 classAssigns = classAssigns.filter(a => 
                     !a.subjectId.includes("PI") && 
                     !a.subjectId.includes("PAI") && 
@@ -66,7 +62,7 @@ export async function startGenerating() {
                     if (slotsToMerge > 0) {
                         classAssigns.push({
                             subjectId: `${pi.subjectId} / PM`,
-                            teacherId: `${pi.teacherId}/${pmTask.teacherId}`, // Gabung ID Guru (e.g., "LAI/KHU/PM_GURU")
+                            teacherId: `${pi.teacherId}/${pmTask.teacherId}`, 
                             totalSlots: slotsToMerge,
                             isDouble: pi.isDouble || false,
                             classId: cls.id,
@@ -86,7 +82,7 @@ export async function startGenerating() {
         }
         
         await saveToCloud();
-        alert("Jadual Waktu Berjaya Dijana (Termasuk Co-Teaching & Parallel)!");
+        alert("Jadual Waktu Berjaya Dijana! Subjek PJ telah ditetapkan pada slot pagi.");
     } catch (e) { 
         console.error("Ralat Penjanaan:", e); 
         alert("Gagal menjana jadual: " + e.message); 
@@ -110,7 +106,6 @@ async function generateClassGrid(classId, classAssigns) {
     const grid = {};
     DAYS.forEach(d => grid[d] = {});
     
-    // PERHIMPUNAN: Tetap Rabu Slot 1
     grid["Rabu"][1] = { subjectId: "PERHIMPUNAN", teacherId: "SEMUA" };
 
     let queue = classAssigns.map(a => ({ ...a, left: (a.periods || a.totalSlots) }))
@@ -127,7 +122,8 @@ async function generateClassGrid(classId, classAssigns) {
                 if (usedToday >= 3) continue;
 
                 let size = (a.isDouble && a.left >= 2) ? 2 : 1;
-                let slot = findSlot(grid[day], day, size, a.teacherId, classId);
+                // Masukkan a.subjectId ke dalam fungsi findSlot
+                let slot = findSlot(grid[day], day, size, a.teacherId, classId, a.subjectId);
 
                 if (slot !== -1) {
                     for (let i = 0; i < size; i++) {
@@ -146,8 +142,14 @@ async function generateClassGrid(classId, classAssigns) {
     return grid;
 }
 
-function findSlot(dayGrid, day, size, tId, cId) {
-    const max = MAX_SLOTS[day];
+function findSlot(dayGrid, day, size, tId, cId, sId) {
+    let max = MAX_SLOTS[day];
+
+    // PENAMBAHBAIKAN: Hadkan PJ sehingga Slot 5 (9:10 Pagi)
+    if (sId && sId.toUpperCase().includes("PJ")) {
+        max = 5; 
+    }
+
     for (let s = 1; s <= max - (size - 1); s++) {
         if (s === 6 || (s < 6 && s + size > 6)) continue; 
 
