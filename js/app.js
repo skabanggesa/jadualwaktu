@@ -9,7 +9,10 @@ import {
     doc, 
     setDoc, 
     getDocs, 
-    deleteDoc
+    deleteDoc,
+    writeBatch,
+    addDoc,
+    serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { 
     getAuth, 
@@ -25,20 +28,20 @@ const auth = getAuth();
 let teachersList = [];
 let subjectsList = [];
 let classesList = [];
+let assignmentDraft = []; // Simpan draf agihan tugas secara lokal sebelum ke Cloud
 
 const timeMapping = {
-    "1": "07:30 - 08:00",
-    "2": "08:00 - 08:30",
-    "3": "08:30 - 09:00",
-    "4": "09:00 - 09:30",
-    "5": "09:30 - 10:00",
-    "6": "10:00 - 10:30",
-    "7": "10:30 - 11:00",
-    "8": "11:00 - 11:30",
-    "9": "11:30 - 12:00",
-    "10": "12:00 - 12:30",
-    "11": "12:30 - 13:00",
-    "12": "13:00 - 13:30"
+    "1": "07:10 - 07:40",
+    "2": "07:40 - 08:10",
+    "3": "08:10 - 08:40",
+    "4": "08:40 - 09:10",
+    "5": "09:10 - 09:40",
+    "6": "09:40 - 10:00",
+    "7": "10:00 - 10:30",
+    "8": "10:30 - 11:00",
+    "9": "11:00 - 11:30",
+    "10": "11:30 - 12:00",
+    "11": "12:00 - 12:30"
 };
 
 const clean = (str) => (str ? str.trim().replace(/\s+/g, '') : "");
@@ -57,6 +60,7 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
+// Logic Login/Logout sedia ada
 if (document.getElementById('btnLogin')) {
     document.getElementById('btnLogin').onclick = async () => {
         const email = document.getElementById('loginEmail').value;
@@ -106,9 +110,98 @@ document.getElementById('btnSaveTeacher').onclick = () => {
     }
 };
 
-// --- D. RENDER TABLES & DROPDOWNS ---
+// --- D. AGIHAN TUGAS (WORKLOAD) -> KOLEKSI 'assignments' ---
+
+// 1. Fungsi Tambah ke Draf Lokal
+const btnAddToDraft = document.getElementById('btnAddToAssignmentDraft');
+if (btnAddToDraft) {
+    btnAddToDraft.onclick = () => {
+        const tId = document.getElementById('selectTeacher').value;
+        const sId = document.getElementById('selectSubject').value;
+        const cId = document.getElementById('selectClass').value;
+        const periods = document.getElementById('inputPeriods')?.value;
+
+        if (!tId || !sId || !cId || !periods) return alert("Sila lengkapkan pilihan Guru, Subjek, Kelas dan Bilangan Waktu!");
+
+        assignmentDraft.push({
+            teacherId: tId,
+            teacherName: teachersList.find(t => t.id === tId)?.name || tId,
+            subjectId: sId,
+            subjectName: subjectsList.find(s => s.id === sId)?.name || sId,
+            classId: cId,
+            periods: parseInt(periods)
+        });
+
+        renderAssignmentDraftTable();
+    };
+}
+
+// 2. Fungsi Papar Jadual Draf
+function renderAssignmentDraftTable() {
+    const container = document.getElementById('assignmentDraftContainer');
+    if (!container) return;
+    if (assignmentDraft.length === 0) { container.innerHTML = ""; return; }
+
+    let rows = assignmentDraft.map((item, idx) => `
+        <tr>
+            <td>${item.teacherName}</td>
+            <td>${item.subjectName}</td>
+            <td>${item.classId}</td>
+            <td style="text-align:center;">${item.periods}</td>
+            <td><button class="btn-sm btn-delete" onclick="removeFromAssignmentDraft(${idx})">Batal</button></td>
+        </tr>`).join('');
+
+    container.innerHTML = `
+        <div style="margin-top:20px; padding:15px; background:#f0f7ff; border-left:5px solid #2980b9;">
+            <h3>Draf Agihan Tugas (Belum Disimpan)</h3>
+            <table class="data-table">
+                <thead><tr><th>Guru</th><th>Subjek</th><th>Kelas</th><th>Waktu</th><th>Aksi</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+            <button id="btnSaveAssignments" class="btn-primary" style="margin-top:10px; background:#2980b9;">
+                💾 Simpan Semua Ke Cloud (Koleksi: assignments)
+            </button>
+        </div>`;
+
+    document.getElementById('btnSaveAssignments').onclick = saveAssignmentsToCloud;
+}
+
+window.removeFromAssignmentDraft = (idx) => {
+    assignmentDraft.splice(idx, 1);
+    renderAssignmentDraftTable();
+};
+
+// 3. Fungsi Simpan ke Cloud (Koleksi: assignments)
+async function saveAssignmentsToCloud() {
+    if (assignmentDraft.length === 0) return;
+    if (!confirm(`Simpan ${assignmentDraft.length} rekod agihan ke cloud?`)) return;
+
+    try {
+        const batch = writeBatch(db);
+        assignmentDraft.forEach(item => {
+            // Document ID: Kelas_Subjek_Guru
+            const docId = `${item.classId}_${item.subjectId}_${item.teacherId}`;
+            const docRef = doc(db, "assignments", docId);
+            batch.set(docRef, {
+                ...item,
+                updatedAt: serverTimestamp()
+            });
+        });
+
+        await batch.commit();
+        alert("Agihan berjaya disimpan ke koleksi 'assignments'!");
+        assignmentDraft = [];
+        renderAssignmentDraftTable();
+    } catch (error) {
+        console.error("Ralat simpan assignments:", error);
+        alert("Gagal simpan: " + error.message);
+    }
+}
+
+// --- E. RENDER TABLES & DROPDOWNS ---
 function renderTeacherTable() {
     const container = document.getElementById('teacherTableContainer');
+    if(!container) return;
     let html = `<table class="data-table"><tr><th>ID</th><th>Nama</th><th>Tindakan</th></tr>`;
     teachersList.forEach(t => {
         html += `<tr><td>${t.id}</td><td>${t.name}</td>
@@ -119,6 +212,7 @@ function renderTeacherTable() {
 
 function renderSubjectTable() {
     const container = document.getElementById('subjectTableContainer');
+    if(!container) return;
     let html = `<table class="data-table"><tr><th>ID</th><th>Subjek</th><th>Tindakan</th></tr>`;
     subjectsList.forEach(s => {
         html += `<tr><td>${s.id}</td><td>${s.name}</td>
@@ -134,7 +228,6 @@ function populateDropdowns() {
         let options = `<option value="">-- Pilih ${label} --</option>`;
         if(includeAll) options += `<option value="ALL">-- SEMUA KELAS --</option>`;
         
-        // Memaparkan Nama (ID) supaya tidak keliru kod G08
         options += list.map(i => {
             const displayName = i.name ? `${i.name} (${i.id})` : i.id;
             return `<option value="${i.id}">${displayName}</option>`;
@@ -144,11 +237,11 @@ function populateDropdowns() {
     fill('selectTeacher', teachersList, "Guru");
     fill('selectSubject', subjectsList, "Subjek");
     fill('selectClass', classesList, "Kelas");
-    fill('viewClassSelect', classesList, "Kelas", true); // Tambah pilihan ALL
+    fill('viewClassSelect', classesList, "Kelas", true);
     fill('absentTeacherSelect', teachersList, "Guru");
 }
 
-// --- E. GENERATE & VIEW JADUAL ---
+// --- F. GENERATE & VIEW JADUAL ---
 document.getElementById('btnGenerate').onclick = () => { if(confirm("Jana jadual baru?")) startGenerating(); };
 
 document.getElementById('btnViewJadual').onclick = async () => {
@@ -164,7 +257,6 @@ document.getElementById('btnViewJadual').onclick = async () => {
             const classDiv = document.createElement('div');
             classDiv.style.marginBottom = "50px";
             classDiv.style.pageBreakAfter = "always"; 
-            // Tambah tajuk yang hanya nampak masa cetak
             classDiv.innerHTML = `<h2 class="print-only-title" style="text-align:center;">JADUAL WAKTU KELAS: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
             container.appendChild(classDiv);
             await renderTimetableGrid(`grid-${cls.id}`, cls.id);
@@ -175,22 +267,14 @@ document.getElementById('btnViewJadual').onclick = async () => {
     }
 };
 
-// --- FIX: Butang Cetak Jadual ---
-// Kita kesan butang menggunakan ID secara terus di dalam JS
 const btnPrint = document.getElementById('btnPrintJadual');
 if (btnPrint) {
-    btnPrint.onclick = () => {
-        console.log("Memulakan proses cetakan...");
-        window.print();
-    };
+    btnPrint.onclick = () => { window.print(); };
 }
 
-// Tambah ini juga untuk sokongan global (pilihan)
-window.printTimetable = () => {
-    window.print();
-};
+window.printTimetable = () => { window.print(); };
 
-// --- F. GURU GANTI (RELIEF) ---
+// --- G. GURU GANTI (RELIEF) ---
 document.getElementById('btnIdentifyRelief').onclick = async () => {
     const absentTeacherId = document.getElementById('absentTeacherSelect').value;
     const reliefDateVal = document.getElementById('reliefDate').value;
@@ -247,7 +331,6 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         const selected = candidates[0];
         if (selected) dailyReliefCount[selected.id]++;
 
-        // Gunakan Mapping Masa
         const timeStr = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
 
         tableRows += `
@@ -260,7 +343,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     });
 
     resultArea.innerHTML = `
-        <div id="printableReliefArea" style="padding:20px; background:#fff;">
+        <div id="printableReliefArea" style="padding:20px; background:#fff; border:1px solid #ccc;">
             <div style="text-align:center; border-bottom:2px solid #000; margin-bottom:15px; padding-bottom:10px;">
                 <h2 style="margin:0;">SLIP GURU GANTI (RELIEF)</h2>
                 <p>Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b></p>
@@ -283,7 +366,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         </div>`;
 };
 
-// --- G. HELPER FUNCTIONS ---
+// --- H. HELPER FUNCTIONS ---
 function mapSchedulesByTeacher(allTimetables) {
     const map = {};
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
