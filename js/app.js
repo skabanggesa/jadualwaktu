@@ -20,24 +20,25 @@ import {
 import { startGenerating } from "./engine-generator.js";
 import { renderTimetableGrid, getCurrentTimetableData } from "./ui-render.js";
 
-// --- A. PEMUBAH UBAH GLOBAL ---
+// --- A. PEMUBAH UBAH GLOBAL & MAPPING ---
 const auth = getAuth();
 let teachersList = [];
 let subjectsList = [];
 let classesList = [];
 
 const timeMapping = {
-    "1": "07:10 - 07:40",
-    "2": "07:40 - 08:10",
-    "3": "08:10 - 09:40",
-    "4": "08:40 - 09:10",
-    "5": "09:10 - 9:40",
-    "6": "9:00 - 10:00",
-    "7": "10:00 - 10:30",
-    "8": "10:30 - 11:00",
-    "9": "11:00 - 11:30",
-    "10": "11:30 - 12:00",
-    "11": "12:00 - 12:30"
+    "1": "07:30 - 08:00",
+    "2": "08:00 - 08:30",
+    "3": "08:30 - 09:00",
+    "4": "09:00 - 09:30",
+    "5": "09:30 - 10:00",
+    "6": "10:00 - 10:30",
+    "7": "10:30 - 11:00",
+    "8": "11:00 - 11:30",
+    "9": "11:30 - 12:00",
+    "10": "12:00 - 12:30",
+    "11": "12:30 - 13:00",
+    "12": "13:00 - 13:30"
 };
 
 const clean = (str) => (str ? str.trim().replace(/\s+/g, '') : "");
@@ -73,6 +74,7 @@ if (document.getElementById('btnLogout')) {
 
 // --- C. PENGURUSAN DATA MASTER ---
 async function loadAllData() {
+    console.log("Memuatkan data dari Firestore...");
     const [snapT, snapS, snapC] = await Promise.all([
         getDocs(collection(db, "teachers")),
         getDocs(collection(db, "subjects")),
@@ -87,7 +89,6 @@ async function loadAllData() {
     renderSubjectTable();
 }
 
-// Global delete function
 window.deleteRecord = async (col, id) => {
     if (confirm(`Padam rekod ${id}?`)) {
         await deleteDoc(doc(db, col, id));
@@ -101,7 +102,7 @@ document.getElementById('btnSaveTeacher').onclick = () => {
     const short = document.getElementById('regTeacherShort').value.toUpperCase();
     if(id && name) {
         setDoc(doc(db, "teachers", clean(id)), { name, shortform: short, canRelief: true })
-        .then(() => { alert("Disimpan!"); loadAllData(); });
+        .then(() => { alert("Simpan Berjaya!"); loadAllData(); });
     }
 };
 
@@ -132,13 +133,18 @@ function populateDropdowns() {
         if(!el) return;
         let options = `<option value="">-- Pilih ${label} --</option>`;
         if(includeAll) options += `<option value="ALL">-- SEMUA KELAS --</option>`;
-        options += list.map(i => `<option value="${i.id}">${i.id}</option>`).join('');
+        
+        // Memaparkan Nama (ID) supaya tidak keliru kod G08
+        options += list.map(i => {
+            const displayName = i.name ? `${i.name} (${i.id})` : i.id;
+            return `<option value="${i.id}">${displayName}</option>`;
+        }).join('');
         el.innerHTML = options;
     };
     fill('selectTeacher', teachersList, "Guru");
     fill('selectSubject', subjectsList, "Subjek");
     fill('selectClass', classesList, "Kelas");
-    fill('viewClassSelect', classesList, "Kelas", true); // Tambah pilihan SEMUA
+    fill('viewClassSelect', classesList, "Kelas", true); // Tambah pilihan ALL
     fill('absentTeacherSelect', teachersList, "Guru");
 }
 
@@ -153,12 +159,12 @@ document.getElementById('btnViewJadual').onclick = async () => {
     container.innerHTML = "<p>⏳ Memuatkan jadual...</p>";
 
     if (val === "ALL") {
-        container.innerHTML = ""; // Kosongkan untuk paparan semua
+        container.innerHTML = ""; 
         for (const cls of classesList) {
             const classDiv = document.createElement('div');
             classDiv.style.marginBottom = "50px";
-            classDiv.style.borderBottom = "2px dashed #ccc";
-            classDiv.innerHTML = `<h2 class="no-print">Jadual Kelas: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
+            classDiv.style.pageBreakAfter = "always"; // Supaya setiap kelas start page baru bila print
+            classDiv.innerHTML = `<h2 class="print-only-title">JADUAL WAKTU KELAS: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
             container.appendChild(classDiv);
             await renderTimetableGrid(`grid-${cls.id}`, cls.id);
         }
@@ -168,7 +174,7 @@ document.getElementById('btnViewJadual').onclick = async () => {
     }
 };
 
-// Butang Cetak Jadual (Dibetulkan)
+// Fungsi Cetak Global (Boleh dipanggil dari HTML)
 window.printTimetable = () => {
     window.print();
 };
@@ -198,10 +204,9 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     const slotsToReplace = [];
     Object.keys(allTimetables).forEach(classId => {
         const dayData = allTimetables[classId][selectedDay];
-        if (dayData) {
+        if (dayData && typeof dayData === 'object') {
             Object.keys(dayData).forEach(slotKey => {
                 const slot = dayData[slotKey];
-                // Pastikan semakan ID guru konsisten
                 const currentTeacher = slot.teacherId || slot.teacher;
                 if (slot && currentTeacher === absentTeacherId) {
                     slotsToReplace.push({ 
@@ -216,13 +221,12 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     });
 
     if (slotsToReplace.length === 0) {
-        resultArea.innerHTML = `<p style="text-align:center; color:red;">Tiada kelas ditemui untuk guru ini pada hari ${selectedDay}.</p>`;
+        resultArea.innerHTML = `<p style="text-align:center; color:orange;">Tiada kelas ditemui pada hari ${selectedDay}.</p>`;
         return;
     }
 
     slotsToReplace.sort((a, b) => a.slotIndex - b.slotIndex);
 
-    // BINA TABLE HTML
     let tableRows = "";
     slotsToReplace.forEach(item => {
         let candidates = findEligibleRelief(item.slotIndex, selectedDay, teacherSchedules);
@@ -232,6 +236,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         const selected = candidates[0];
         if (selected) dailyReliefCount[selected.id]++;
 
+        // Gunakan Mapping Masa
         const timeStr = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
 
         tableRows += `
@@ -239,12 +244,12 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
                 <td style="text-align:center; border:1px solid #000;"><b>${timeStr}</b></td>
                 <td style="text-align:center; border:1px solid #000;">${item.classId}</td>
                 <td style="text-align:center; border:1px solid #000;">${item.subject}</td>
-                <td style="border:1px solid #000; padding:5px;">${selected ? `<b>${selected.name}</b> <br><small>(${selected.reason})</small>` : '<span style="color:red">TIADA GURU</span>'}</td>
+                <td style="border:1px solid #000; padding:5px;">${selected ? `<b>${selected.name}</b> <br><small>(${selected.reason})</small>` : 'TIADA GURU'}</td>
             </tr>`;
     });
 
     resultArea.innerHTML = `
-        <div id="printableReliefArea" style="padding:20px; border:1px solid #ccc; background:#fff;">
+        <div id="printableReliefArea" style="padding:20px; background:#fff;">
             <div style="text-align:center; border-bottom:2px solid #000; margin-bottom:15px; padding-bottom:10px;">
                 <h2 style="margin:0;">SLIP GURU GANTI (RELIEF)</h2>
                 <p>Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b></p>
@@ -255,14 +260,14 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
                     <tr style="background:#f2f2f2;">
                         <th style="border:1px solid #000; padding:8px;">Waktu</th>
                         <th style="border:1px solid #000; padding:8px;">Kelas</th>
-                        <th style="border:1px solid #000; padding:8px;">Subjek</th>
-                        <th style="border:1px solid #000; padding:8px;">Guru Ganti</th>
+                        <th style="border:1px solid #000; padding:8px;">Subjek Asal</th>
+                        <th style="border:1px solid #000; padding:8px;">Guru Ganti Dilantik</th>
                     </tr>
                 </thead>
                 <tbody>${tableRows}</tbody>
             </table>
-            <button onclick="window.print()" class="no-print" style="margin-top:20px; width:100%; padding:10px; background:#27ae60; color:white; border:none; cursor:pointer;">
-                🖨️ Cetak Slip Relief Sekarang
+            <button onclick="window.print()" class="no-print" style="margin-top:20px; width:100%; padding:10px; background:#27ae60; color:white; border:none; border-radius:5px; cursor:pointer;">
+                🖨️ Cetak Slip Relief
             </button>
         </div>`;
 };
@@ -301,8 +306,7 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
         const schedule = teacherSchedules[t.id]?.[day];
         if (!schedule || schedule[slotIdx] !== null) return;
         let isEligible = !(slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]);
-        results.push({ id: t.id, name: t.name, isEligible, reason: isEligible ? "Masa Kosong" : "Penat (2 Jam Terus)" });
+        results.push({ id: t.id, name: t.name, isEligible, reason: isEligible ? "Masa Kosong" : "Rehat Wajib (2 Jam Berturut)" });
     });
     return results;
 }
-
