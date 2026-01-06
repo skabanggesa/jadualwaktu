@@ -57,7 +57,6 @@ export async function renderTimetableGrid(containerId, classId) {
     currentTimetableData = docSnap.exists() ? docSnap.data() : {};
     drawGrid(containerId, classId);
     
-    // Papar Status Pengisian
     const classAssigns = assignSnap.docs.map(d => d.data()).filter(a => a.classId === classId);
     renderStatus(containerId, classAssigns);
 }
@@ -67,10 +66,10 @@ function drawGrid(containerId, classId) {
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
     const times = { 1:"07:10", 2:"07:40", 3:"08:10", 4:"08:40", 5:"09:10", 6:"10:00", 7:"10:30", 8:"11:00", 9:"11:30" };
 
-    let html = `<table class="timetable-table"><thead><tr><th>Hari</th>`;
+    let html = `<table class="timetable-table"><thead><tr><th>Hari / Masa</th>`;
     for (let i = 1; i <= 9; i++) {
         html += `<th>${i}<br><small>${times[i]}</small></th>`;
-        if (i === 5) html += `<th class="rehat-col">REHAT</th>`;
+        if (i === 5) html += `<th class="rehat-col">REHAT<br><small>09:40</small></th>`;
     }
     html += `</tr></thead><tbody>`;
 
@@ -85,9 +84,10 @@ function drawGrid(containerId, classId) {
                 isDraggable = item.subjectId !== "PERHIMPUNAN";
                 bgColor = getSubjectColor(item.subjectId);
                 const teacherDisplay = item.teacherId.split("/").map(id => teacherMapGlobal[id] || id).join("/");
+                const fontSize = item.subjectId.length > 10 ? "0.6rem" : "0.75rem";
                 cellContent = `<div class="cell-box">
-                    <span class="subject-name" style="font-size:0.7rem; font-weight:bold;">${item.subjectId}</span>
-                    <span class="teacher-name" style="font-size:0.5rem;">${teacherDisplay}</span>
+                    <span class="subject-name" style="font-size:${fontSize}; font-weight:bold; display:block;">${item.subjectId}</span>
+                    <span class="teacher-name" style="font-size:0.55rem; opacity:0.8;">${teacherDisplay}</span>
                 </div>`;
             }
 
@@ -105,8 +105,8 @@ function drawGrid(containerId, classId) {
 
 function renderStatus(containerId, assigns) {
     const container = document.getElementById(containerId);
-    let statusHtml = `<div class="status-panel" style="margin-top:20px; border:1px solid #ccc; padding:10px; border-radius:8px;">
-        <h4 style="margin-top:0;">Semakan Waktu Terisi:</h4><div style="display:flex; flex-wrap:wrap; gap:10px;">`;
+    let statusHtml = `<div class="status-panel" style="margin-top:20px; border:1px solid #ccc; padding:15px; border-radius:8px; background:#fff;">
+        <h4 style="margin:0 0 10px 0;">Semakan Waktu Terisi:</h4><div style="display:flex; flex-wrap:wrap; gap:8px;">`;
     
     assigns.forEach(a => {
         let count = 0;
@@ -116,23 +116,20 @@ function renderStatus(containerId, assigns) {
             });
         });
         const required = a.periods || a.totalSlots;
-        const color = count < required ? 'red' : 'green';
-        statusHtml += `<div style="color:${color}; border:1px solid ${color}; padding:4px 8px; border-radius:4px; font-size:0.75rem;">
+        const color = count < required ? '#ef4444' : '#22c55e';
+        statusHtml += `<div style="color:${color}; border:1px solid ${color}; padding:5px 10px; border-radius:6px; font-size:0.75rem; font-weight:bold; background:${color}10;">
             ${a.subjectId}: ${count}/${required}
         </div>`;
     });
     container.innerHTML += statusHtml + `</div></div>`;
 }
 
-// Global Drag Handlers
 window.handleDragStart = (e) => {
     const cell = e.target.closest(".slot-cell");
     e.dataTransfer.setData("fromDay", cell.dataset.day);
     e.dataTransfer.setData("fromSlot", cell.dataset.slot);
 };
-
 window.handleDragOver = (e) => e.preventDefault();
-
 window.handleDrop = async (e, containerId, classId) => {
     e.preventDefault();
     const fromDay = e.dataTransfer.getData("fromDay");
@@ -153,6 +150,5 @@ window.handleDrop = async (e, containerId, classId) => {
     if (!currentTimetableData[toDay]) currentTimetableData[toDay] = {};
     currentTimetableData[fromDay][fromSlot] = itemAtTarget;
     currentTimetableData[toDay][toSlot] = itemToMove;
-    
     drawGrid(containerId, classId);
 };
