@@ -1,7 +1,17 @@
-import { db } from "./firebase-config.js";
-import { collection, getDocs, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+/**
+ * SISTEM PENGURUSAN JADUAL WAKTU (ASG VER 1.0)
+ * Fail: engine-generator.js
+ */
 
-// --- KONFIGURASI WAKTU TAHAP 1 ---
+import { db } from "./firebase-config.js";
+import { 
+    collection, 
+    getDocs, 
+    writeBatch, 
+    doc 
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+// --- KONFIGURASI WAKTU ---
 const DAYS = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
 // Isnin-Khamis: 9 slot (Tamat 12:00), Jumaat: 8 slot (Tamat 11:30)
 const MAX_SLOTS = { 
@@ -19,50 +29,61 @@ let timetableResult = {}, teacherDailyLoad = {};
  * Memulakan proses penjanaan jadual untuk semua kelas.
  */
 export async function startGenerating() {
-    console.log("Menjana Jadual...");
+    console.log("Memulakan proses penjanaan...");
     timetableResult = {}; 
     teacherDailyLoad = {};
     
     try {
         await fetchData();
+
+        if (assignments.length === 0) {
+            throw new Error("Tiada data agihan tugas (assignments) ditemui dalam Cloud!");
+        }
+
         for (const cls of classesList) {
             let classAssigns = [...assignments.filter(a => a.classId === cls.id)];
             
-            // --- LOGIK GABUNGAN PI / PM ---
-            const piTasks = classAssigns.filter(a => a.subjectId.startsWith("PI"));
-            const pmTask = classAssigns.find(a => a.subjectId === "PM");
+            // --- LOGIK GABUNGAN PI (Pendidikan Islam) / PM (Pendidikan Moral) ---
+            const piTasks = classAssigns.filter(a => a.subjectId.toUpperCase().startsWith("PI"));
+            const pmTask = classAssigns.find(a => a.subjectId.toUpperCase() === "PM");
 
             if (piTasks.length > 0 && pmTask) {
                 // Keluarkan PI/PM asal untuk digantikan dengan versi gabungan
-                classAssigns = classAssigns.filter(a => !a.subjectId.startsWith("PI") && a.subjectId !== "PM");
-                let pmSlotsRemaining = pmTask.totalSlots;
+                classAssigns = classAssigns.filter(a => 
+                    !a.subjectId.toUpperCase().startsWith("PI") && 
+                    a.subjectId.toUpperCase() !== "PM"
+                );
+                
+                let pmSlotsRemaining = parseInt(pmTask.periods) || 0;
 
                 piTasks.forEach(pi => {
-                    const slotsToTake = Math.min(pi.totalSlots, pmSlotsRemaining);
+                    const piPeriods = parseInt(pi.periods) || 0;
+                    const slotsToTake = Math.min(piPeriods, pmSlotsRemaining);
+                    
                     if (slotsToTake > 0) {
                         classAssigns.push({
                             subjectId: `${pi.subjectId} / PM`,
                             teacherId: `${pi.teacherId}/${pmTask.teacherId}`,
-                            totalSlots: slotsToTake,
-                            isDouble: pi.isDouble,
+                            periods: slotsToTake,
+                            isDouble: pi.isDouble || false,
                             classId: cls.id
                         });
                         pmSlotsRemaining -= slotsToTake;
                     }
                 });
                 
-                // Jika masih ada baki slot PM yang tidak digabungkan dengan mana-mana PI
+                // Jika masih ada baki slot PM yang tidak digabungkan
                 if (pmSlotsRemaining > 0) {
-                    classAssigns.push({ ...pmTask, totalSlots: pmSlotsRemaining });
+                    classAssigns.push({ ...pmTask, periods: pmSlotsRemaining });
                 }
             }
 
-            // Jana susunan untuk kelas ini
+            // Jana grid jadual untuk kelas semasa
             timetableResult[cls.id] = await generateClassGrid(cls.id, classAssigns);
         }
         
         await saveToCloud();
-        alert("Jadual Waktu Berjaya Dijana!");
+        alert("Jadual Waktu Berjaya Dijana dan Disimpan ke Cloud!");
     } catch (e) { 
         console.error("Ralat Penjanaan:", e); 
         alert("Gagal menjana jadual: " + e.message); 
@@ -86,7 +107,7 @@ async function fetchData() {
 }
 
 /**
- * Logik utama untuk menyusun subjek ke dalam grid 5 hari.
+ * Logik utama untuk menyusun subjek ke dalam grid 5 hari bagi satu kelas.
  */
 async function generateClassGrid(classId, classAssigns) {
     const grid = {};
@@ -95,28 +116,36 @@ async function generateClassGrid(classId, classAssigns) {
     // PERHIMPUNAN: Tetap pada hari Rabu, Slot 1
     grid["Rabu"][1] = { subjectId: "PERHIMPUNAN", teacherId: "SEMUA" };
 
-    // Susun tugasan: Subjek 'isDouble' diutamakan dahulu supaya senang cari ruang kosong
-    let queue = classAssigns.map(a => ({ ...a, left: a.totalSlots }))
-                .sort((a, b) => (b.isDouble ? 1 : 0) - (a.isDouble ? 1 : 0));
+    // Sediakan giliran (queue) berdasarkan baki slot (periods)
+    // Utamakan subjek berkembar (isDouble)
+    let queue = classAssigns.map(a => ({ 
+        ...a, 
+        left: parseInt(a.periods) || 0 
+    })).sort((a, b) => (b.isDouble ? 1 : 0) - (a.isDouble ? 1 : 0));
 
     let safetyCounter = 0;
-    while (queue.some(a => a.left > 0) && safetyCounter < 1000) {
+    // Teruskan selagi ada subjek yang belum habis disusun
+    while (queue.some(a => a.left > 0) && safetyCounter < 2000) {
         safetyCounter++;
         for (let day of DAYS) {
             for (let a of queue) {
                 if (a.left <= 0) continue;
                 
-                // Had: Maksimum 3 slot subjek yang sama dalam satu hari
+                // Had: Maksimum 3 slot subjek yang sama dalam satu hari (kecuali PI/PM gabungan)
                 let usedToday = Object.values(grid[day]).filter(s => s.subjectId === a.subjectId).length;
                 if (usedToday >= 3) continue;
 
-                // Tentukan saiz: Guna 2 slot (double) jika masih banyak baki, jika tidak guna 1.
+                // Tentukan saiz slot: 2 (double) atau 1 (single)
                 let size = (a.isDouble && a.left >= 2) ? 2 : 1;
 
                 let slot = findSlot(grid[day], day, size, a.teacherId, classId);
+                
                 if (slot !== -1) {
                     for (let i = 0; i < size; i++) {
-                        grid[day][slot + i] = { subjectId: a.subjectId, teacherId: a.teacherId };
+                        grid[day][slot + i] = { 
+                            subjectId: a.subjectId, 
+                            teacherId: a.teacherId 
+                        };
                         updateTeacherLoad(a.teacherId, day, 1);
                     }
                     a.left -= size;
@@ -128,52 +157,57 @@ async function generateClassGrid(classId, classAssigns) {
 }
 
 /**
- * Mencari slot kosong yang tidak bertembung dengan guru atau waktu rehat.
+ * Mencari slot kosong yang tidak bertembung dengan guru, kelas, atau waktu rehat.
  */
 function findSlot(dayGrid, day, size, tId, cId) {
     const max = MAX_SLOTS[day];
     
     for (let s = 1; s <= max - (size - 1); s++) {
-        // Logik Rehat: 
-        // 1. Slot tidak boleh bermula di waktu rehat (selepas slot 5).
-        // 2. Jika subjek berkembar (size 2), ia tidak boleh bermula di slot 5 
-        //    kerana slot seterusnya (slot 6) dipisahkan oleh rehat.
+        // Logik Rehat: Slot 6 adalah rehat (10:00 - 10:30)
+        // 1. Subjek tidak boleh bermula pada slot rehat (Slot 6).
+        // 2. Jika subjek berkembar (size 2), ia tidak boleh bermula pada slot 5
+        //    kerana ia akan melangkau ke waktu rehat.
+        if (s === 6) continue;
         if (s === 5 && size > 1) continue; 
-        if (s > 5 && s <= 5) continue; // (Keselamatan tambahan)
 
-        let free = true;
+        let isFree = true;
         for (let i = 0; i < size; i++) {
+            let currentSlot = s + i;
             // Periksa jika grid kelas sudah terisi atau guru sedang mengajar di kelas lain
-            if (dayGrid[s + i] || !isTeacherFree(tId, day, s + i)) {
-                free = false; 
+            if (dayGrid[currentSlot] || !isTeacherFree(tId, day, currentSlot)) {
+                isFree = false; 
                 break;
             }
         }
-        if (free) return s;
+        if (isFree) return s;
     }
     return -1;
 }
 
 /**
- * Semakan pertembungan guru di kelas-kelas lain.
+ * Semakan pertembungan guru di semua kelas pada waktu yang sama.
  */
 function isTeacherFree(tId, day, slot) {
-    const ids = tId.split('/'); 
-    for (let classId in timetableResult) {
-        const cell = timetableResult[classId][day]?.[slot];
-        if (cell) {
+    if (!tId || tId === "SEMUA") return true;
+
+    const idsToCheck = tId.split('/'); 
+    for (let otherClassId in timetableResult) {
+        const cell = timetableResult[otherClassId][day]?.[slot];
+        if (cell && cell.teacherId) {
             const cellTids = cell.teacherId.split('/');
-            // Jika mana-mana guru dalam gabungan sedang mengajar, kembalikan false
-            if (ids.some(id => cellTids.includes(id))) return false;
+            // Jika mana-mana guru dalam gabungan sedang mengajar di kelas lain
+            if (idsToCheck.some(id => cellTids.includes(id))) return false;
         }
     }
     return true;
 }
 
 /**
- * Mengemas kini statistik beban kerja guru secara harian.
+ * Mengemas kini beban kerja harian guru (untuk rujukan atau logik masa hadapan).
  */
 function updateTeacherLoad(tId, day, count) {
+    if (!tId || tId === "SEMUA") return;
+    
     const ids = tId.split('/');
     ids.forEach(id => {
         if (!teacherDailyLoad[id]) teacherDailyLoad[id] = {};
@@ -182,7 +216,7 @@ function updateTeacherLoad(tId, day, count) {
 }
 
 /**
- * Menyimpan hasil penjanaan ke Firestore.
+ * Menyimpan hasil akhir jadual ke koleksi 'timetables' di Firestore.
  */
 async function saveToCloud() {
     const batch = writeBatch(db);
@@ -191,4 +225,5 @@ async function saveToCloud() {
         batch.set(ref, timetableResult[cId]);
     }
     await batch.commit();
+    console.log("Data berjaya disimpan ke Firestore.");
 }
