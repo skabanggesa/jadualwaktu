@@ -11,6 +11,7 @@ import {
     getDocs, 
     deleteDoc,
     addDoc,
+    writeBatch,
     serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { 
@@ -27,7 +28,10 @@ const auth = getAuth();
 let teachersList = [];
 let subjectsList = [];
 let classesList = [];
-let reliefDraft = []; // Simpan draf guru ganti secara lokal sebelum simpan ke cloud
+
+// Dua jenis draf berbeza
+let assignmentDraft = []; // Untuk Agihan Tugas Utama (Workload)
+let reliefDraft = [];     // Untuk Guru Ganti (Substitute)
 
 const timeMapping = {
     "1": "07:30 - 08:00", "2": "08:00 - 08:30", "3": "08:30 - 09:00",
@@ -142,7 +146,78 @@ function populateDropdowns() {
     fill('absentTeacherSelect', teachersList, "Guru");
 }
 
-// --- E. GENERATE & VIEW JADUAL ---
+// --- E. FUNGSI AGIHAN TUGAS (WORKLOAD) - SIMPAN KE 'timetables' ---
+
+// 1. Tambah ke Draf Agihan
+const btnAddToAssignment = document.getElementById('btnAddToAssignmentDraft');
+if (btnAddToAssignment) {
+    btnAddToAssignment.onclick = () => {
+        const tId = document.getElementById('selectTeacher').value;
+        const sId = document.getElementById('selectSubject').value;
+        const cId = document.getElementById('selectClass').value;
+        const periods = document.getElementById('inputPeriods')?.value;
+
+        if (!tId || !sId || !cId || !periods) return alert("Lengkapkan maklumat agihan!");
+
+        assignmentDraft.push({
+            teacherId: tId,
+            teacherName: teachersList.find(t => t.id === tId)?.name,
+            subjectId: sId,
+            subjectName: subjectsList.find(s => s.id === sId)?.name,
+            classId: cId,
+            periods: parseInt(periods)
+        });
+        renderAssignmentDraftTable();
+    };
+}
+
+function renderAssignmentDraftTable() {
+    const container = document.getElementById('assignmentDraftContainer');
+    if (!container) return;
+    if (assignmentDraft.length === 0) { container.innerHTML = ""; return; }
+
+    let rows = assignmentDraft.map((item, idx) => `
+        <tr>
+            <td>${item.teacherName}</td>
+            <td>${item.subjectName}</td>
+            <td>${item.classId}</td>
+            <td>${item.periods}</td>
+            <td><button class="btn-sm btn-delete" onclick="removeFromAssignmentDraft(${idx})">Batal</button></td>
+        </tr>`).join('');
+
+    container.innerHTML = `
+        <h3>Draf Agihan Tugas Utama</h3>
+        <table class="data-table">
+            <thead><tr><th>Guru</th><th>Subjek</th><th>Kelas</th><th>Waktu</th><th>Aksi</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+        <button onclick="saveAssignmentsToCloud()" class="btn-primary" style="margin-top:10px; background:#2980b9;">
+            💾 Simpan Semua ke Koleksi Timetables
+        </button>`;
+}
+
+window.removeFromAssignmentDraft = (idx) => {
+    assignmentDraft.splice(idx, 1);
+    renderAssignmentDraftTable();
+};
+
+window.saveAssignmentsToCloud = async () => {
+    if (assignmentDraft.length === 0) return;
+    try {
+        const batch = writeBatch(db);
+        assignmentDraft.forEach(item => {
+            const docId = `${item.classId}_${item.subjectId}_${item.teacherId}`;
+            const docRef = doc(db, "timetables", docId);
+            batch.set(docRef, { ...item, type: 'workload', updatedAt: serverTimestamp() });
+        });
+        await batch.commit();
+        alert("Agihan tugas berjaya disimpan ke Cloud!");
+        assignmentDraft = [];
+        renderAssignmentDraftTable();
+    } catch (e) { alert("Ralat: " + e.message); }
+};
+
+// --- F. GENERATE & VIEW JADUAL ---
 document.getElementById('btnGenerate').onclick = () => { if(confirm("Jana jadual baru?")) startGenerating(); };
 
 document.getElementById('btnViewJadual').onclick = async () => {
@@ -173,9 +248,7 @@ if (btnPrint) {
     btnPrint.onclick = () => { window.print(); };
 }
 
-window.printTimetable = () => { window.print(); };
-
-// --- F. GURU GANTI (RELIEF) & DRAF AGIHAN ---
+// --- G. GURU GANTI (RELIEF) & DRAF RELIEF - SIMPAN KE 'relief_logs' ---
 
 document.getElementById('btnIdentifyRelief').onclick = async () => {
     const absentTeacherId = document.getElementById('absentTeacherSelect').value;
@@ -224,7 +297,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
 
     slotsToReplace.sort((a, b) => a.slotIndex - b.slotIndex);
 
-    let htmlSuggestions = `<h3>Cadangan Agihan (Klik + untuk Draf)</h3>
+    let htmlSuggestions = `<h3>Cadangan Agihan Relief (Klik + untuk Draf)</h3>
     <table class="data-table">
         <tr><th>Waktu</th><th>Kelas</th><th>Subjek</th><th>Calon Guru Ganti</th><th>Tindakan</th></tr>`;
 
@@ -250,44 +323,29 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
             </tr>`;
     });
 
-    resultArea.innerHTML = htmlSuggestions + `</table><div id="draftContainer"></div>`;
-    renderDraftUI();
+    resultArea.innerHTML = htmlSuggestions + `</table><div id="reliefDraftContainer"></div>`;
+    renderReliefDraftUI();
 };
 
-// Fungsi: Tambah ke Senarai Draf
 window.addToReliefDraft = (slotKey, classId, subject, tId, tName) => {
-    if (!tId || tId === "undefined") return alert("Tiada guru ganti yang dipilih!");
-    
-    // Elak duplikasi slot yang sama
+    if (!tId || tId === "undefined") return alert("Tiada guru ganti!");
     const duplicate = reliefDraft.find(d => d.slotKey === slotKey && d.classId === classId);
     if (duplicate) return alert("Slot ini sudah ada dalam draf.");
 
     reliefDraft.push({ 
-        slotKey, 
-        classId, 
-        subject, 
-        teacherId: tId, 
-        teacherName: tName,
-        timeStr: timeMapping[slotKey]
+        slotKey, classId, subject, teacherId: tId, teacherName: tName, timeStr: timeMapping[slotKey]
     });
-    renderDraftUI();
+    renderReliefDraftUI();
 };
 
-// Fungsi: Papar UI Draf & Butang Simpan Cloud
-function renderDraftUI() {
-    const container = document.getElementById('draftContainer');
-    if (reliefDraft.length === 0) {
-        container.innerHTML = "";
-        return;
-    }
+function renderReliefDraftUI() {
+    const container = document.getElementById('reliefDraftContainer');
+    if (reliefDraft.length === 0) { container.innerHTML = ""; return; }
 
     let rows = reliefDraft.map((d, index) => `
         <tr>
-            <td>${d.timeStr}</td>
-            <td>${d.classId}</td>
-            <td>${d.subject}</td>
-            <td><b>${d.teacherName}</b></td>
-            <td class="no-print"><button onclick="removeFromDraft(${index})">❌</button></td>
+            <td>${d.timeStr}</td><td>${d.classId}</td><td>${d.subject}</td><td><b>${d.teacherName}</b></td>
+            <td class="no-print"><button onclick="removeFromReliefDraft(${index})">❌</button></td>
         </tr>`).join('');
 
     container.innerHTML = `
@@ -298,40 +356,28 @@ function renderDraftUI() {
                 <tbody>${rows}</tbody>
             </table>
             <div style="margin-top:15px;" class="no-print">
-                <button onclick="saveReliefToCloud()" style="background:#2980b9; color:white; padding:10px; width:48%; cursor:pointer;">💾 Simpan ke Cloud</button>
+                <button onclick="saveReliefToCloud()" style="background:#2980b9; color:white; padding:10px; width:48%; cursor:pointer;">💾 Simpan ke Cloud (Logs)</button>
                 <button onclick="window.print()" style="background:#27ae60; color:white; padding:10px; width:48%; cursor:pointer;">🖨️ Cetak Slip</button>
             </div>
         </div>`;
 }
 
-window.removeFromDraft = (idx) => {
-    reliefDraft.splice(idx, 1);
-    renderDraftUI();
-};
+window.removeFromReliefDraft = (idx) => { reliefDraft.splice(idx, 1); renderReliefDraftUI(); };
 
-// Fungsi: Simpan ke Firestore (Cloud)
 window.saveReliefToCloud = async () => {
     if (reliefDraft.length === 0) return;
     const reliefDateVal = document.getElementById('reliefDate').value;
     const absentTeacherId = document.getElementById('absentTeacherSelect').value;
-
     try {
         await addDoc(collection(db, "relief_logs"), {
-            date: reliefDateVal,
-            absentTeacherId: absentTeacherId,
-            assignments: reliefDraft,
-            createdAt: serverTimestamp()
+            date: reliefDateVal, absentTeacherId, assignments: reliefDraft, createdAt: serverTimestamp()
         });
-        alert("Berjaya disimpan ke Cloud!");
-        reliefDraft = []; // Kosongkan draf selepas simpan
-        renderDraftUI();
-    } catch (e) {
-        console.error("Ralat simpan: ", e);
-        alert("Gagal simpan ke cloud.");
-    }
+        alert("Simpan Relief Berjaya!");
+        reliefDraft = []; renderReliefDraftUI();
+    } catch (e) { alert("Gagal: " + e.message); }
 };
 
-// --- G. HELPER FUNCTIONS ---
+// --- H. HELPER FUNCTIONS ---
 function mapSchedulesByTeacher(allTimetables) {
     const map = {};
     const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
