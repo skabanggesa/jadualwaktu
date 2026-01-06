@@ -26,7 +26,6 @@ let teachersList = [];
 let subjectsList = [];
 let classesList = [];
 
-// --- PEMETAAN MASA (Pastikan ini selari dengan jadual sekolah anda) ---
 const timeMapping = {
     "1": "07:30 - 08:00",
     "2": "08:00 - 08:30",
@@ -58,10 +57,8 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-// Login Handlers
-const btnLogin = document.getElementById('btnLogin');
-if (btnLogin) {
-    btnLogin.onclick = async () => {
+if (document.getElementById('btnLogin')) {
+    document.getElementById('btnLogin').onclick = async () => {
         const email = document.getElementById('loginEmail').value;
         const pass = document.getElementById('loginPassword').value;
         try { await signInWithEmailAndPassword(auth, email, pass); } 
@@ -69,44 +66,29 @@ if (btnLogin) {
     };
 }
 
-const btnLogout = document.getElementById('btnLogout');
-if (btnLogout) {
-    btnLogout.onclick = async () => {
+if (document.getElementById('btnLogout')) {
+    document.getElementById('btnLogout').onclick = async () => {
         if (confirm("Log keluar?")) { await signOut(auth); location.reload(); }
     };
 }
 
 // --- C. PENGURUSAN DATA MASTER ---
 async function loadAllData() {
-    try {
-        console.log("Memuatkan data...");
-        const [snapT, snapS, snapC] = await Promise.all([
-            getDocs(collection(db, "teachers")),
-            getDocs(collection(db, "subjects")),
-            getDocs(collection(db, "classes"))
-        ]);
-        
-        teachersList = snapT.docs.map(d => ({ id: d.id, ...d.data() }));
-        subjectsList = snapS.docs.map(d => ({ id: d.id, ...d.data() }));
-        classesList = snapC.docs.map(d => ({ id: d.id, ...d.data() }));
-        
-        populateDropdowns();
-        renderTeacherTable();
-        renderSubjectTable();
-        console.log("Data berjaya dimuatkan.");
-    } catch (err) {
-        console.error("Ralat muat data:", err);
-    }
+    const [snapT, snapS, snapC] = await Promise.all([
+        getDocs(collection(db, "teachers")),
+        getDocs(collection(db, "subjects")),
+        getDocs(collection(db, "classes"))
+    ]);
+    teachersList = snapT.docs.map(d => ({ id: d.id, ...d.data() }));
+    subjectsList = snapS.docs.map(d => ({ id: d.id, ...d.data() }));
+    classesList = snapC.docs.map(d => ({ id: d.id, ...d.data() }));
+    
+    populateDropdowns();
+    renderTeacherTable();
+    renderSubjectTable();
 }
 
-async function saveMasterData(col, id, data) {
-    try {
-        await setDoc(doc(db, col, clean(id)), data);
-        alert(`Berjaya disimpan!`);
-        loadAllData();
-    } catch (e) { alert("Ralat simpan: " + e.message); }
-}
-
+// Global delete function
 window.deleteRecord = async (col, id) => {
     if (confirm(`Padam rekod ${id}?`)) {
         await deleteDoc(doc(db, col, id));
@@ -114,36 +96,22 @@ window.deleteRecord = async (col, id) => {
     }
 };
 
-// Button Save Handlers
 document.getElementById('btnSaveTeacher').onclick = () => {
     const id = document.getElementById('regTeacherId').value;
     const name = document.getElementById('regTeacherName').value;
     const short = document.getElementById('regTeacherShort').value.toUpperCase();
-    // Default: Boleh relief. Anda boleh tukar secara manual di DB jika perlu blacklist.
-    if(id && name) saveMasterData("teachers", id, { name, shortform: short, canRelief: true });
-};
-
-document.getElementById('btnSaveSubject').onclick = () => {
-    const id = document.getElementById('regSubId').value;
-    const name = document.getElementById('regSubName').value;
-    const slots = parseInt(document.getElementById('regSubSlots').value);
-    const isDouble = document.getElementById('regSubDouble').checked;
-    if(id && name) saveMasterData("subjects", id, { name, slots, isDouble });
-};
-
-document.getElementById('btnSaveClass').onclick = () => {
-    const id = document.getElementById('regClassId').value;
-    const name = document.getElementById('regClassName').value;
-    if(id && name) saveMasterData("classes", id, { name });
+    if(id && name) {
+        setDoc(doc(db, "teachers", clean(id)), { name, shortform: short, canRelief: true })
+        .then(() => { alert("Disimpan!"); loadAllData(); });
+    }
 };
 
 // --- D. RENDER TABLES & DROPDOWNS ---
 function renderTeacherTable() {
     const container = document.getElementById('teacherTableContainer');
-    if (!container) return;
-    let html = `<table class="data-table"><tr><th>ID</th><th>Nama</th><th>Singkatan</th><th>Tindakan</th></tr>`;
+    let html = `<table class="data-table"><tr><th>ID</th><th>Nama</th><th>Tindakan</th></tr>`;
     teachersList.forEach(t => {
-        html += `<tr><td>${t.id}</td><td>${t.name}</td><td>${t.shortform || '-'}</td>
+        html += `<tr><td>${t.id}</td><td>${t.name}</td>
         <td><button class="btn-sm btn-delete" onclick="deleteRecord('teachers', '${t.id}')">Padam</button></td></tr>`;
     });
     container.innerHTML = html + `</table>`;
@@ -151,26 +119,27 @@ function renderTeacherTable() {
 
 function renderSubjectTable() {
     const container = document.getElementById('subjectTableContainer');
-    if (!container) return;
-    let html = `<table class="data-table"><tr><th>ID</th><th>Subjek</th><th>Slot</th><th>Tindakan</th></tr>`;
+    let html = `<table class="data-table"><tr><th>ID</th><th>Subjek</th><th>Tindakan</th></tr>`;
     subjectsList.forEach(s => {
-        html += `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.slots} ${s.isDouble ? '(2)' : '(1)'}</td>
+        html += `<tr><td>${s.id}</td><td>${s.name}</td>
         <td><button class="btn-sm btn-delete" onclick="deleteRecord('subjects', '${s.id}')">Padam</button></td></tr>`;
     });
     container.innerHTML = html + `</table>`;
 }
 
 function populateDropdowns() {
-    const fill = (elId, list, label) => {
+    const fill = (elId, list, label, includeAll = false) => {
         const el = document.getElementById(elId);
         if(!el) return;
-        el.innerHTML = `<option value="">-- Pilih ${label} --</option>` +
-            list.map(i => `<option value="${i.id}">${i.name || i.id}</option>`).join('');
+        let options = `<option value="">-- Pilih ${label} --</option>`;
+        if(includeAll) options += `<option value="ALL">-- SEMUA KELAS --</option>`;
+        options += list.map(i => `<option value="${i.id}">${i.id}</option>`).join('');
+        el.innerHTML = options;
     };
     fill('selectTeacher', teachersList, "Guru");
     fill('selectSubject', subjectsList, "Subjek");
     fill('selectClass', classesList, "Kelas");
-    fill('viewClassSelect', classesList, "Kelas"); // Filter Jadual Kelas
+    fill('viewClassSelect', classesList, "Kelas", true); // Tambah pilihan SEMUA
     fill('absentTeacherSelect', teachersList, "Guru");
 }
 
@@ -179,21 +148,30 @@ document.getElementById('btnGenerate').onclick = () => { if(confirm("Jana jadual
 
 document.getElementById('btnViewJadual').onclick = async () => {
     const val = document.getElementById('viewClassSelect').value;
-    if (!val) return alert("Sila pilih kelas!");
-    await renderTimetableGrid("timetableContainer", val);
+    const container = document.getElementById("timetableContainer");
+    if (!val) return alert("Pilih kelas!");
+
+    container.innerHTML = "<p>⏳ Memuatkan jadual...</p>";
+
+    if (val === "ALL") {
+        container.innerHTML = ""; // Kosongkan untuk paparan semua
+        for (const cls of classesList) {
+            const classDiv = document.createElement('div');
+            classDiv.style.marginBottom = "50px";
+            classDiv.style.borderBottom = "2px dashed #ccc";
+            classDiv.innerHTML = `<h2 class="no-print">Jadual Kelas: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
+            container.appendChild(classDiv);
+            await renderTimetableGrid(`grid-${cls.id}`, cls.id);
+        }
+    } else {
+        container.innerHTML = `<div id="single-grid"></div>`;
+        await renderTimetableGrid("single-grid", val);
+    }
 };
 
-// Fungsi Cetak Yang Dibetulkan (Non-Destructive)
-window.printPage = () => {
+// Butang Cetak Jadual (Dibetulkan)
+window.printTimetable = () => {
     window.print();
-};
-
-document.getElementById('btnSaveManual').onclick = async () => {
-    const classId = document.getElementById('viewClassSelect').value;
-    if (!classId) return alert("Pilih kelas!");
-    const data = getCurrentTimetableData(); 
-    await setDoc(doc(db, "timetables", classId), data);
-    alert("Disimpan ke Firestore!");
 };
 
 // --- F. GURU GANTI (RELIEF) ---
@@ -224,63 +202,70 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         if (dayData) {
             Object.keys(dayData).forEach(slotKey => {
                 const slot = dayData[slotKey];
-                const tId = slot.teacherId || slot.teacher;
-                if (slot && tId === absentTeacherId) {
-                    slotsToReplace.push({ slotKey, slotIndex: parseInt(slotKey)-1, classId, subject: slot.subjectId || slot.subject });
+                // Pastikan semakan ID guru konsisten
+                const currentTeacher = slot.teacherId || slot.teacher;
+                if (slot && currentTeacher === absentTeacherId) {
+                    slotsToReplace.push({ 
+                        slotKey: slotKey, 
+                        slotIndex: parseInt(slotKey)-1, 
+                        classId: classId, 
+                        subject: slot.subjectId || slot.subject 
+                    });
                 }
             });
         }
     });
 
     if (slotsToReplace.length === 0) {
-        resultArea.innerHTML = `<p style="color:orange; text-align:center;">Tiada kelas untuk diganti pada hari ${selectedDay}.</p>`;
+        resultArea.innerHTML = `<p style="text-align:center; color:red;">Tiada kelas ditemui untuk guru ini pada hari ${selectedDay}.</p>`;
         return;
     }
 
     slotsToReplace.sort((a, b) => a.slotIndex - b.slotIndex);
 
-    let html = `
-        <div id="printableReliefArea">
-            <div style="text-align:center; margin-bottom:15px; border-bottom:1px solid #000; padding-bottom:10px;">
-                <h2 style="margin:0;">SLIP GURU GANTI (RELIEF)</h2>
-                <p>Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b></p>
-                <p>Guru Tidak Hadir: <b>${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}</b></p>
-            </div>
-            <table class="data-table">
-                <thead>
-                    <tr><th>Waktu</th><th>Kelas</th><th>Subjek</th><th>Guru Ganti Dilantik</th></tr>
-                </thead>
-                <tbody>`;
-
+    // BINA TABLE HTML
+    let tableRows = "";
     slotsToReplace.forEach(item => {
         let candidates = findEligibleRelief(item.slotIndex, selectedDay, teacherSchedules);
-        
-        // Filter: Buang guru yang tidak hadir & yang blacklist (canRelief === false)
         candidates = candidates.filter(c => c.id !== absentTeacherId);
-
-        // Agihan adil
         candidates.sort((a, b) => (b.isEligible - a.isEligible) || (dailyReliefCount[a.id] - dailyReliefCount[b.id]));
 
         const selected = candidates[0];
         if (selected) dailyReliefCount[selected.id]++;
 
-        // TUKAR SLOT KE MASA (Contoh: Slot 1 -> 07:30)
-        const displayTime = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
+        const timeStr = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
 
-        html += `
+        tableRows += `
             <tr>
-                <td style="text-align:center;"><b>${displayTime}</b></td>
-                <td style="text-align:center;">${item.classId}</td>
-                <td style="text-align:center;">${item.subject}</td>
-                <td>${selected ? `<b>${selected.name}</b> <br><small>(${selected.reason})</small>` : 'TIADA GURU'}</td>
+                <td style="text-align:center; border:1px solid #000;"><b>${timeStr}</b></td>
+                <td style="text-align:center; border:1px solid #000;">${item.classId}</td>
+                <td style="text-align:center; border:1px solid #000;">${item.subject}</td>
+                <td style="border:1px solid #000; padding:5px;">${selected ? `<b>${selected.name}</b> <br><small>(${selected.reason})</small>` : '<span style="color:red">TIADA GURU</span>'}</td>
             </tr>`;
     });
 
-    html += `</tbody></table>
-            <button onclick="window.print()" class="btn-print no-print" style="margin-top:15px; width:100%; padding:10px;">🖨️ Cetak Slip Relief</button>
+    resultArea.innerHTML = `
+        <div id="printableReliefArea" style="padding:20px; border:1px solid #ccc; background:#fff;">
+            <div style="text-align:center; border-bottom:2px solid #000; margin-bottom:15px; padding-bottom:10px;">
+                <h2 style="margin:0;">SLIP GURU GANTI (RELIEF)</h2>
+                <p>Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b></p>
+                <p>Guru Tidak Hadir: <b>${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}</b></p>
+            </div>
+            <table style="width:100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background:#f2f2f2;">
+                        <th style="border:1px solid #000; padding:8px;">Waktu</th>
+                        <th style="border:1px solid #000; padding:8px;">Kelas</th>
+                        <th style="border:1px solid #000; padding:8px;">Subjek</th>
+                        <th style="border:1px solid #000; padding:8px;">Guru Ganti</th>
+                    </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+            </table>
+            <button onclick="window.print()" class="no-print" style="margin-top:20px; width:100%; padding:10px; background:#27ae60; color:white; border:none; cursor:pointer;">
+                🖨️ Cetak Slip Relief Sekarang
+            </button>
         </div>`;
-
-    resultArea.innerHTML = html;
 };
 
 // --- G. HELPER FUNCTIONS ---
@@ -302,7 +287,7 @@ function mapSchedulesByTeacher(allTimetables) {
                     const idx = parseInt(slotKey) - 1;
                     const tId = slot.teacherId || slot.teacher;
                     if (tId && map[tId] && map[tId][day]) {
-                        map[tId][day][idx] = { classId, subjectId: slot.subjectId || slot.subject };
+                        map[tId][day][idx] = { classId, subjectId: slot.subjectId };
                     }
                 });
             }
@@ -314,19 +299,10 @@ function mapSchedulesByTeacher(allTimetables) {
 function findEligibleRelief(slotIdx, day, teacherSchedules) {
     let results = [];
     teachersList.forEach(t => {
-        // Logik Blacklist: Abaikan guru jika canRelief ditanda false
-        if (t.canRelief === false) return;
-
         const schedule = teacherSchedules[t.id]?.[day];
         if (!schedule || schedule[slotIdx] !== null) return;
-
-        let isEligible = true;
-        let reason = "Masa Kosong";
-        if (slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]) {
-            isEligible = false;
-            reason = "2 Jam Berturut";
-        }
-        results.push({ id: t.id, name: t.name, isEligible, reason });
+        let isEligible = !(slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]);
+        results.push({ id: t.id, name: t.name, isEligible, reason: isEligible ? "Masa Kosong" : "Penat (2 Jam Terus)" });
     });
     return results;
 }
