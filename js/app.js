@@ -113,16 +113,21 @@ document.getElementById('btnSaveTeacher').onclick = () => {
 // --- D. AGIHAN TUGAS (WORKLOAD) -> KOLEKSI 'assignments' ---
 
 // 1. Fungsi Tambah ke Draf Lokal
-const btnAddToDraft = document.getElementById('btnAddToAssignmentDraft');
+// Diselaraskan dengan HTML: id="btnAddLocal" dan id="inputSlots"
+const btnAddToDraft = document.getElementById('btnAddLocal');
+
 if (btnAddToDraft) {
     btnAddToDraft.onclick = () => {
         const tId = document.getElementById('selectTeacher').value;
         const sId = document.getElementById('selectSubject').value;
         const cId = document.getElementById('selectClass').value;
-        const periods = document.getElementById('inputPeriods')?.value;
+        const periods = document.getElementById('inputSlots').value; 
 
-        if (!tId || !sId || !cId || !periods) return alert("Sila lengkapkan pilihan Guru, Subjek, Kelas dan Bilangan Waktu!");
+        if (!tId || !sId || !cId || !periods) {
+            return alert("Sila lengkapkan pilihan Guru, Kelas, Subjek dan Slot!");
+        }
 
+        // Simpan data ke dalam array draf
         assignmentDraft.push({
             teacherId: tId,
             teacherName: teachersList.find(t => t.id === tId)?.name || tId,
@@ -132,70 +137,94 @@ if (btnAddToDraft) {
             periods: parseInt(periods)
         });
 
+        // Kemaskini paparan senarai draf
         renderAssignmentDraftTable();
     };
 }
 
-// 2. Fungsi Papar Jadual Draf
+// 2. Fungsi Papar Senarai Draf
+// Diselaraskan dengan HTML: id="localListUI"
 function renderAssignmentDraftTable() {
-    const container = document.getElementById('assignmentDraftContainer');
+    const container = document.getElementById('localListUI');
     if (!container) return;
-    if (assignmentDraft.length === 0) { container.innerHTML = ""; return; }
+    
+    if (assignmentDraft.length === 0) { 
+        container.innerHTML = "<p style='padding:10px; color:#666; text-align:center;'>Tiada draf agihan.</p>"; 
+        return; 
+    }
 
-    let rows = assignmentDraft.map((item, idx) => `
-        <tr>
-            <td>${item.teacherName}</td>
-            <td>${item.subjectName}</td>
-            <td>${item.classId}</td>
-            <td style="text-align:center;">${item.periods}</td>
-            <td><button class="btn-sm btn-delete" onclick="removeFromAssignmentDraft(${idx})">Batal</button></td>
-        </tr>`).join('');
+    // Membina jadual untuk paparan yang lebih kemas
+    let html = `
+        <table style="width:100%; border-collapse: collapse; font-size: 13px;">
+            <thead style="background:#f1f5f9; position: sticky; top: 0;">
+                <tr>
+                    <th style="padding:10px; border-bottom:1px solid #ddd; text-align:left;">Guru</th>
+                    <th style="padding:10px; border-bottom:1px solid #ddd; text-align:left;">Kelas & Subjek</th>
+                    <th style="padding:10px; border-bottom:1px solid #ddd; text-align:center;">Slot</th>
+                    <th style="padding:10px; border-bottom:1px solid #ddd; text-align:center;">Aksi</th>
+                </tr>
+            </thead>
+            <tbody>`;
 
-    container.innerHTML = `
-        <div style="margin-top:20px; padding:15px; background:#f0f7ff; border-left:5px solid #2980b9;">
-            <h3>Draf Agihan Tugas (Belum Disimpan)</h3>
-            <table class="data-table">
-                <thead><tr><th>Guru</th><th>Subjek</th><th>Kelas</th><th>Waktu</th><th>Aksi</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
-            <button id="btnSaveAssignments" class="btn-primary" style="margin-top:10px; background:#2980b9;">
-                💾 Simpan Semua Ke Cloud (Koleksi: assignments)
-            </button>
-        </div>`;
+    assignmentDraft.forEach((item, idx) => {
+        html += `
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding:8px;">${item.teacherName}</td>
+                <td style="padding:8px;">${item.classId} - ${item.subjectName}</td>
+                <td style="padding:8px; text-align:center;">${item.periods}</td>
+                <td style="padding:8px; text-align:center;">
+                    <button onclick="removeFromAssignmentDraft(${idx})" style="color:#e74c3c; cursor:pointer; background:none; border:none; font-size:16px;">&times;</button>
+                </td>
+            </tr>`;
+    });
 
-    document.getElementById('btnSaveAssignments').onclick = saveAssignmentsToCloud;
+    html += `</tbody></table>`;
+    container.innerHTML = html;
 }
 
+// Fungsi buang draf (window supaya boleh diakses dari onclick string)
 window.removeFromAssignmentDraft = (idx) => {
     assignmentDraft.splice(idx, 1);
     renderAssignmentDraftTable();
 };
 
-// 3. Fungsi Simpan ke Cloud (Koleksi: assignments)
-async function saveAssignmentsToCloud() {
-    if (assignmentDraft.length === 0) return;
-    if (!confirm(`Simpan ${assignmentDraft.length} rekod agihan ke cloud?`)) return;
+// 3. Fungsi Simpan Semua ke Cloud
+// Diselaraskan dengan HTML: id="btnSyncCloud"
+const btnSync = document.getElementById('btnSyncCloud');
+if (btnSync) {
+    btnSync.onclick = async () => {
+        if (assignmentDraft.length === 0) return alert("Tiada draf untuk disimpan!");
+        if (!confirm(`Simpan ${assignmentDraft.length} rekod agihan ke Cloud?`)) return;
 
-    try {
-        const batch = writeBatch(db);
-        assignmentDraft.forEach(item => {
-            // Document ID: Kelas_Subjek_Guru
-            const docId = `${item.classId}_${item.subjectId}_${item.teacherId}`;
-            const docRef = doc(db, "assignments", docId);
-            batch.set(docRef, {
-                ...item,
-                updatedAt: serverTimestamp()
+        try {
+            btnSync.disabled = true;
+            btnSync.innerText = "⏳ Sedang Menyimpan...";
+
+            const batch = writeBatch(db);
+            assignmentDraft.forEach(item => {
+                // ID Dokumen unik: Kelas_Subjek_Guru
+                const docId = `${item.classId}_${item.subjectId}_${item.teacherId}`;
+                const docRef = doc(db, "assignments", docId);
+                batch.set(docRef, {
+                    ...item,
+                    updatedAt: serverTimestamp()
+                });
             });
-        });
 
-        await batch.commit();
-        alert("Agihan berjaya disimpan ke koleksi 'assignments'!");
-        assignmentDraft = [];
-        renderAssignmentDraftTable();
-    } catch (error) {
-        console.error("Ralat simpan assignments:", error);
-        alert("Gagal simpan: " + error.message);
-    }
+            await batch.commit();
+            alert("✅ Semua agihan berjaya disimpan ke Cloud!");
+            
+            // Kosongkan draf selepas berjaya simpan
+            assignmentDraft = [];
+            renderAssignmentDraftTable();
+        } catch (error) {
+            console.error("Ralat Firebase:", error);
+            alert("Gagal simpan: " + error.message);
+        } finally {
+            btnSync.disabled = false;
+            btnSync.innerText = "💾 SIMPAN SEMUA KE CLOUD";
+        }
+    };
 }
 
 // --- E. RENDER TABLES & DROPDOWNS ---
@@ -404,3 +433,4 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     });
     return results;
 }
+
