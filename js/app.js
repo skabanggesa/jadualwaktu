@@ -163,18 +163,29 @@ document.getElementById('btnViewJadual').onclick = async () => {
         for (const cls of classesList) {
             const classDiv = document.createElement('div');
             classDiv.style.marginBottom = "50px";
-            classDiv.style.pageBreakAfter = "always"; // Supaya setiap kelas start page baru bila print
-            classDiv.innerHTML = `<h2 class="print-only-title">JADUAL WAKTU KELAS: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
+            classDiv.style.pageBreakAfter = "always"; 
+            // Tambah tajuk yang hanya nampak masa cetak
+            classDiv.innerHTML = `<h2 class="print-only-title" style="text-align:center;">JADUAL WAKTU KELAS: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
             container.appendChild(classDiv);
             await renderTimetableGrid(`grid-${cls.id}`, cls.id);
         }
     } else {
-        container.innerHTML = `<div id="single-grid"></div>`;
+        container.innerHTML = `<h2 class="print-only-title" style="text-align:center;">JADUAL WAKTU KELAS: ${val}</h2><div id="single-grid"></div>`;
         await renderTimetableGrid("single-grid", val);
     }
 };
 
-// Fungsi Cetak Global (Boleh dipanggil dari HTML)
+// --- FIX: Butang Cetak Jadual ---
+// Kita kesan butang menggunakan ID secara terus di dalam JS
+const btnPrint = document.getElementById('btnPrintJadual');
+if (btnPrint) {
+    btnPrint.onclick = () => {
+        console.log("Memulakan proses cetakan...");
+        window.print();
+    };
+}
+
+// Tambah ini juga untuk sokongan global (pilihan)
 window.printTimetable = () => {
     window.print();
 };
@@ -310,3 +321,4 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     });
     return results;
 }
+
