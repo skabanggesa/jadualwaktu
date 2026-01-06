@@ -9,7 +9,9 @@ import {
     doc, 
     setDoc, 
     getDocs, 
-    deleteDoc
+    deleteDoc,
+    addDoc,
+    serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { 
     getAuth, 
@@ -25,20 +27,13 @@ const auth = getAuth();
 let teachersList = [];
 let subjectsList = [];
 let classesList = [];
+let reliefDraft = []; // Simpan draf guru ganti secara lokal sebelum simpan ke cloud
 
 const timeMapping = {
-    "1": "07:30 - 08:00",
-    "2": "08:00 - 08:30",
-    "3": "08:30 - 09:00",
-    "4": "09:00 - 09:30",
-    "5": "09:30 - 10:00",
-    "6": "10:00 - 10:30",
-    "7": "10:30 - 11:00",
-    "8": "11:00 - 11:30",
-    "9": "11:30 - 12:00",
-    "10": "12:00 - 12:30",
-    "11": "12:30 - 13:00",
-    "12": "13:00 - 13:30"
+    "1": "07:30 - 08:00", "2": "08:00 - 08:30", "3": "08:30 - 09:00",
+    "4": "09:00 - 09:30", "5": "09:30 - 10:00", "6": "10:00 - 10:30",
+    "7": "10:30 - 11:00", "8": "11:00 - 11:30", "9": "11:30 - 12:00",
+    "10": "12:00 - 12:30", "11": "12:30 - 13:00", "12": "13:00 - 13:30"
 };
 
 const clean = (str) => (str ? str.trim().replace(/\s+/g, '') : "");
@@ -134,7 +129,6 @@ function populateDropdowns() {
         let options = `<option value="">-- Pilih ${label} --</option>`;
         if(includeAll) options += `<option value="ALL">-- SEMUA KELAS --</option>`;
         
-        // Memaparkan Nama (ID) supaya tidak keliru kod G08
         options += list.map(i => {
             const displayName = i.name ? `${i.name} (${i.id})` : i.id;
             return `<option value="${i.id}">${displayName}</option>`;
@@ -144,7 +138,7 @@ function populateDropdowns() {
     fill('selectTeacher', teachersList, "Guru");
     fill('selectSubject', subjectsList, "Subjek");
     fill('selectClass', classesList, "Kelas");
-    fill('viewClassSelect', classesList, "Kelas", true); // Tambah pilihan ALL
+    fill('viewClassSelect', classesList, "Kelas", true); 
     fill('absentTeacherSelect', teachersList, "Guru");
 }
 
@@ -164,7 +158,6 @@ document.getElementById('btnViewJadual').onclick = async () => {
             const classDiv = document.createElement('div');
             classDiv.style.marginBottom = "50px";
             classDiv.style.pageBreakAfter = "always"; 
-            // Tambah tajuk yang hanya nampak masa cetak
             classDiv.innerHTML = `<h2 class="print-only-title" style="text-align:center;">JADUAL WAKTU KELAS: ${cls.id}</h2><div id="grid-${cls.id}"></div>`;
             container.appendChild(classDiv);
             await renderTimetableGrid(`grid-${cls.id}`, cls.id);
@@ -175,22 +168,15 @@ document.getElementById('btnViewJadual').onclick = async () => {
     }
 };
 
-// --- FIX: Butang Cetak Jadual ---
-// Kita kesan butang menggunakan ID secara terus di dalam JS
 const btnPrint = document.getElementById('btnPrintJadual');
 if (btnPrint) {
-    btnPrint.onclick = () => {
-        console.log("Memulakan proses cetakan...");
-        window.print();
-    };
+    btnPrint.onclick = () => { window.print(); };
 }
 
-// Tambah ini juga untuk sokongan global (pilihan)
-window.printTimetable = () => {
-    window.print();
-};
+window.printTimetable = () => { window.print(); };
 
-// --- F. GURU GANTI (RELIEF) ---
+// --- F. GURU GANTI (RELIEF) & DRAF AGIHAN ---
+
 document.getElementById('btnIdentifyRelief').onclick = async () => {
     const absentTeacherId = document.getElementById('absentTeacherSelect').value;
     const reliefDateVal = document.getElementById('reliefDate').value;
@@ -238,49 +224,111 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
 
     slotsToReplace.sort((a, b) => a.slotIndex - b.slotIndex);
 
-    let tableRows = "";
+    let htmlSuggestions = `<h3>Cadangan Agihan (Klik + untuk Draf)</h3>
+    <table class="data-table">
+        <tr><th>Waktu</th><th>Kelas</th><th>Subjek</th><th>Calon Guru Ganti</th><th>Tindakan</th></tr>`;
+
     slotsToReplace.forEach(item => {
         let candidates = findEligibleRelief(item.slotIndex, selectedDay, teacherSchedules);
         candidates = candidates.filter(c => c.id !== absentTeacherId);
         candidates.sort((a, b) => (b.isEligible - a.isEligible) || (dailyReliefCount[a.id] - dailyReliefCount[b.id]));
 
-        const selected = candidates[0];
-        if (selected) dailyReliefCount[selected.id]++;
-
-        // Gunakan Mapping Masa
+        const bestCandidate = candidates[0];
         const timeStr = timeMapping[item.slotKey] || `Slot ${item.slotKey}`;
 
-        tableRows += `
+        htmlSuggestions += `
             <tr>
-                <td style="text-align:center; border:1px solid #000;"><b>${timeStr}</b></td>
-                <td style="text-align:center; border:1px solid #000;">${item.classId}</td>
-                <td style="text-align:center; border:1px solid #000;">${item.subject}</td>
-                <td style="border:1px solid #000; padding:5px;">${selected ? `<b>${selected.name}</b> <br><small>(${selected.reason})</small>` : 'TIADA GURU'}</td>
+                <td>${timeStr}</td>
+                <td>${item.classId}</td>
+                <td>${item.subject}</td>
+                <td>${bestCandidate ? `<b>${bestCandidate.name}</b> <br><small>(${bestCandidate.reason})</small>` : 'TIADA'}</td>
+                <td>
+                    <button class="btn-sm" onclick="addToReliefDraft('${item.slotKey}', '${item.classId}', '${item.subject}', '${bestCandidate?.id}', '${bestCandidate?.name}')">
+                        + Tambah ke Draf
+                    </button>
+                </td>
             </tr>`;
     });
 
-    resultArea.innerHTML = `
-        <div id="printableReliefArea" style="padding:20px; background:#fff;">
-            <div style="text-align:center; border-bottom:2px solid #000; margin-bottom:15px; padding-bottom:10px;">
-                <h2 style="margin:0;">SLIP GURU GANTI (RELIEF)</h2>
-                <p>Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b></p>
-                <p>Guru Tidak Hadir: <b>${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}</b></p>
-            </div>
-            <table style="width:100%; border-collapse: collapse;">
-                <thead>
-                    <tr style="background:#f2f2f2;">
-                        <th style="border:1px solid #000; padding:8px;">Waktu</th>
-                        <th style="border:1px solid #000; padding:8px;">Kelas</th>
-                        <th style="border:1px solid #000; padding:8px;">Subjek Asal</th>
-                        <th style="border:1px solid #000; padding:8px;">Guru Ganti Dilantik</th>
-                    </tr>
-                </thead>
-                <tbody>${tableRows}</tbody>
+    resultArea.innerHTML = htmlSuggestions + `</table><div id="draftContainer"></div>`;
+    renderDraftUI();
+};
+
+// Fungsi: Tambah ke Senarai Draf
+window.addToReliefDraft = (slotKey, classId, subject, tId, tName) => {
+    if (!tId || tId === "undefined") return alert("Tiada guru ganti yang dipilih!");
+    
+    // Elak duplikasi slot yang sama
+    const duplicate = reliefDraft.find(d => d.slotKey === slotKey && d.classId === classId);
+    if (duplicate) return alert("Slot ini sudah ada dalam draf.");
+
+    reliefDraft.push({ 
+        slotKey, 
+        classId, 
+        subject, 
+        teacherId: tId, 
+        teacherName: tName,
+        timeStr: timeMapping[slotKey]
+    });
+    renderDraftUI();
+};
+
+// Fungsi: Papar UI Draf & Butang Simpan Cloud
+function renderDraftUI() {
+    const container = document.getElementById('draftContainer');
+    if (reliefDraft.length === 0) {
+        container.innerHTML = "";
+        return;
+    }
+
+    let rows = reliefDraft.map((d, index) => `
+        <tr>
+            <td>${d.timeStr}</td>
+            <td>${d.classId}</td>
+            <td>${d.subject}</td>
+            <td><b>${d.teacherName}</b></td>
+            <td class="no-print"><button onclick="removeFromDraft(${index})">❌</button></td>
+        </tr>`).join('');
+
+    container.innerHTML = `
+        <div id="printableReliefArea" style="margin-top:30px; padding:20px; border:2px solid #333; background:#fff;">
+            <h2 style="text-align:center;">DRAF FINAL SLIP RELIEF</h2>
+            <table style="width:100%; border-collapse:collapse;" class="data-table">
+                <thead><tr style="background:#eee;"><th>Waktu</th><th>Kelas</th><th>Subjek</th><th>Guru Ganti</th><th class="no-print">Aksi</th></tr></thead>
+                <tbody>${rows}</tbody>
             </table>
-            <button onclick="window.print()" class="no-print" style="margin-top:20px; width:100%; padding:10px; background:#27ae60; color:white; border:none; border-radius:5px; cursor:pointer;">
-                🖨️ Cetak Slip Relief
-            </button>
+            <div style="margin-top:15px;" class="no-print">
+                <button onclick="saveReliefToCloud()" style="background:#2980b9; color:white; padding:10px; width:48%; cursor:pointer;">💾 Simpan ke Cloud</button>
+                <button onclick="window.print()" style="background:#27ae60; color:white; padding:10px; width:48%; cursor:pointer;">🖨️ Cetak Slip</button>
+            </div>
         </div>`;
+}
+
+window.removeFromDraft = (idx) => {
+    reliefDraft.splice(idx, 1);
+    renderDraftUI();
+};
+
+// Fungsi: Simpan ke Firestore (Cloud)
+window.saveReliefToCloud = async () => {
+    if (reliefDraft.length === 0) return;
+    const reliefDateVal = document.getElementById('reliefDate').value;
+    const absentTeacherId = document.getElementById('absentTeacherSelect').value;
+
+    try {
+        await addDoc(collection(db, "relief_logs"), {
+            date: reliefDateVal,
+            absentTeacherId: absentTeacherId,
+            assignments: reliefDraft,
+            createdAt: serverTimestamp()
+        });
+        alert("Berjaya disimpan ke Cloud!");
+        reliefDraft = []; // Kosongkan draf selepas simpan
+        renderDraftUI();
+    } catch (e) {
+        console.error("Ralat simpan: ", e);
+        alert("Gagal simpan ke cloud.");
+    }
 };
 
 // --- G. HELPER FUNCTIONS ---
@@ -321,4 +369,3 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     });
     return results;
 }
-
