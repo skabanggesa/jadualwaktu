@@ -168,97 +168,122 @@ document.getElementById('btnSaveManual').onclick = async () => {
     alert("Disimpan ke Firestore!");
 };
 
-// --- F. GURU GANTI (RELIEF) - LOGIK MESRA GURU ---
+// --- F. GURU GANTI (RELIEF) - LOGIK AUTOMATIK & MESRA GURU ---
 
 document.getElementById('btnIdentifyRelief').onclick = async () => {
-    console.log("Butang Relief diklik.");
     const absentTeacherId = document.getElementById('absentTeacherSelect').value;
-    if (!absentTeacherId) return alert("Pilih guru yang tidak hadir.");
+    const reliefDateVal = document.getElementById('reliefDate').value;
+    
+    if (!absentTeacherId || !reliefDateVal) {
+        return alert("Sila pilih guru dan tarikh ketidakhadiran.");
+    }
+
+    // Tukar tarikh ke nama hari (Isnin, Selasa, etc.)
+    const dateObj = new Date(reliefDateVal);
+    const dayNames = ["Ahad", "Isnin", "Selasa", "Rabu", "Khamis", "Jumaat", "Sabtu"];
+    const selectedDay = dayNames[dateObj.getDay()];
+
+    if (selectedDay === "Sabtu" || selectedDay === "Ahad") {
+        return alert("Tarikh yang dipilih adalah hari minggu. Sila pilih hari persekolahan.");
+    }
 
     const resultArea = document.getElementById('reliefResultArea');
-    resultArea.innerHTML = "<p>⏳ Sedang memproses data relief...</p>";
+    resultArea.innerHTML = "<p>⏳ Menjana agihan relief secara automatik...</p>";
 
     const snap = await getDocs(collection(db, "timetables"));
     const allTimetables = {};
     snap.forEach(doc => { allTimetables[doc.id] = doc.data(); });
-    
-    console.log("Data Timetables dimuatkan:", Object.keys(allTimetables).length, "kelas found.");
 
     const teacherSchedules = mapSchedulesByTeacher(allTimetables);
+    
+    // Track jumlah slot relief yang diberikan kepada setiap guru hari ini untuk agihan adil
+    const dailyReliefCount = {};
+    teachersList.forEach(t => dailyReliefCount[t.id] = 0);
 
-    const days = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
-    let html = `<div class="relief-print-wrapper">
-                <h3 style="text-align:center; border-bottom:2px solid #333; padding-bottom:10px;">
-                    CADANGAN GURU GANTI: ${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}
-                </h3>`;
-
-    let totalSlotsToReplace = 0;
-
-    days.forEach(day => {
-        const slotsToReplace = [];
-        
-        Object.keys(allTimetables).forEach(classId => {
-            const dayData = allTimetables[classId][day];
-            
-            // DIBETULKAN: Gunakan Object.keys kerana data Isnin/Selasa di DB adalah Object, bukan Array
-            if (dayData && typeof dayData === 'object') {
-                Object.keys(dayData).forEach(slotKey => {
-                    const slot = dayData[slotKey];
-                    const index = parseInt(slotKey) - 1; // Slot 1 jadi index 0
-
-                    if (slot && (slot.teacherId === absentTeacherId || slot.teacher === absentTeacherId)) {
-                        slotsToReplace.push({ 
-                            slotIndex: index, 
-                            classId: classId, 
-                            subject: slot.subjectId || slot.subject 
-                        });
-                        totalSlotsToReplace++;
-                    }
-                });
-            }
-        });
-
-        if (slotsToReplace.length > 0) {
-            html += `<h4 style="background:#e2e8f0; padding:8px; margin-top:20px;">HARI: ${day.toUpperCase()}</h4>
-                     <table class="data-table">
-                        <tr>
-                            <th width="15%">Waktu / Slot</th>
-                            <th width="15%">Kelas</th>
-                            <th width="70%">Cadangan Guru Ganti (Paling Layak)</th>
-                        </tr>`;
-
-            slotsToReplace.sort((a,b) => a.slotIndex - b.slotIndex).forEach(item => {
-                const candidates = findEligibleRelief(item.slotIndex, day, teacherSchedules);
-                
-                html += `<tr>
-                    <td>Slot ${item.slotIndex + 1}</td>
-                    <td><b>${item.classId}</b><br><small>${item.subject}</small></td>
-                    <td>`;
-                
-                if (candidates.length === 0) {
-                    html += `<span style="color:red;">Tiada guru kosong.</span>`;
-                } else {
-                    candidates.forEach(c => {
-                        const statusClass = c.isEligible ? 'status-eligible' : 'status-rest';
-                        const statusLabel = c.isEligible ? 'LAYAK' : 'REHAT WAJIB';
-                        html += `<div style="margin-bottom:5px; border-bottom:1px solid #f1f1f1; padding-bottom:2px;">
-                                    <span class="status-badge ${statusClass}">${statusLabel}</span> 
-                                    <b>${c.name}</b> <small style="color:#666;">(${c.reason})</small>
-                                 </div>`;
+    const slotsToReplace = [];
+    Object.keys(allTimetables).forEach(classId => {
+        const dayData = allTimetables[classId][selectedDay];
+        if (dayData && typeof dayData === 'object') {
+            Object.keys(dayData).forEach(slotKey => {
+                const slot = dayData[slotKey];
+                if (slot && (slot.teacherId === absentTeacherId || slot.teacher === absentTeacherId)) {
+                    slotsToReplace.push({ 
+                        slotKey: slotKey, 
+                        slotIndex: parseInt(slotKey) - 1,
+                        classId: classId, 
+                        subject: slot.subjectId || slot.subject 
                     });
                 }
-                html += `</td></tr>`;
             });
-            html += `</table>`;
         }
     });
 
-    if (totalSlotsToReplace === 0) {
-        console.log("Tiada slot ditemui untuk guru:", absentTeacherId);
-        html += `<p style="text-align:center; padding:20px; color:orange;">Tiada slot mengajar ditemui untuk guru ini dalam pangkalan data.</p>`;
+    if (slotsToReplace.length === 0) {
+        resultArea.innerHTML = `<p style="color:orange; text-align:center;">Tiada slot mengajar ditemui untuk guru ini pada hari ${selectedDay}.</p>`;
+        return;
     }
 
-    resultArea.innerHTML = html + `</div>`;
+    // Susun mengikut urutan slot
+    slotsToReplace.sort((a, b) => a.slotIndex - b.slotIndex);
+
+    let html = `<div id="printableReliefArea" class="relief-print-wrapper">
+                <div style="text-align:center; border-bottom:2px solid #333; margin-bottom:15px; padding-bottom:10px;">
+                    <h2 style="margin:0;">SLIP GURU GANTI (RELIEF)</h2>
+                    <p style="margin:5px 0;">Tarikh: <b>${reliefDateVal} (${selectedDay.toUpperCase()})</b></p>
+                    <p style="margin:0;">Guru Tidak Hadir: <b>${teachersList.find(t => t.id === absentTeacherId)?.name || absentTeacherId}</b></p>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th width="15%">Waktu</th>
+                            <th width="15%">Kelas</th>
+                            <th width="20%">Subjek Asal</th>
+                            <th width="50%">Guru Ganti Dilantik</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+    slotsToReplace.forEach(item => {
+        let candidates = findEligibleRelief(item.slotIndex, selectedDay, teacherSchedules);
+        
+        // Filter: Buang guru yang tidak hadir dari senarai calon
+        candidates = candidates.filter(c => c.id !== absentTeacherId);
+
+        // Agihan Adil: Susun mengikut Kelayakan (isEligible) dahulu, kemudian ikut siapa paling sedikit dapat relief hari ini
+        candidates.sort((a, b) => {
+            if (a.isEligible !== b.isEligible) return b.isEligible - a.isEligible;
+            return dailyReliefCount[a.id] - dailyReliefCount[b.id];
+        });
+
+        const selected = candidates[0]; // Ambil calon terbaik
+        if (selected) dailyReliefCount[selected.id]++;
+
+        html += `<tr>
+            <td style="text-align:center;">Slot ${item.slotKey}</td>
+            <td style="text-align:center;"><b>${item.classId}</b></td>
+            <td style="text-align:center;">${item.subject}</td>
+            <td>
+                ${selected ? `
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span><b>${selected.name}</b> <br><small style="color:gray;">(${selected.reason})</small></span>
+                        <span class="status-badge ${selected.isEligible ? 'status-eligible' : 'status-rest'}">
+                            ${selected.isEligible ? 'LAYAK' : 'PENAT'}
+                        </span>
+                    </div>
+                ` : '<span style="color:red;">TIADA GURU KOSONG</span>'}
+            </td>
+        </tr>`;
+    });
+
+    html += `</tbody></table>
+            <div style="margin-top:20px; text-align:right;" class="no-print">
+                <button onclick="window.printRelief()" class="btn-print" style="padding:10px 20px; background:#2ecc71; color:white; border:none; border-radius:5px; cursor:pointer;">
+                    🖨️ Cetak Slip Relief
+                </button>
+            </div>
+            </div>`;
+
+    resultArea.innerHTML = html;
 };
 
 // --- G. HELPER FUNCTIONS ---
@@ -276,13 +301,13 @@ function mapSchedulesByTeacher(allTimetables) {
         const classTable = allTimetables[classId];
         Object.keys(classTable).forEach(day => {
             const dayData = classTable[day];
-            // DIBETULKAN: Map data dari Object ke Array mengikut slotKey
             if (dayData && typeof dayData === 'object') {
                 Object.keys(dayData).forEach(slotKey => {
                     const slot = dayData[slotKey];
                     const idx = parseInt(slotKey) - 1;
-                    if (slot && (slot.teacherId || slot.teacher) && map[slot.teacherId || slot.teacher] && map[slot.teacherId || slot.teacher][day]) {
-                        map[slot.teacherId || slot.teacher][day][idx] = { classId, subjectId: slot.subjectId || slot.subject };
+                    const tId = slot.teacherId || slot.teacher;
+                    if (slot && tId && map[tId] && map[tId][day]) {
+                        map[tId][day][idx] = { classId, subjectId: slot.subjectId || slot.subject };
                     }
                 });
             }
@@ -296,15 +321,40 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     teachersList.forEach(t => {
         const schedule = teacherSchedules[t.id]?.[day];
         if (!schedule) return;
-        if (schedule[slotIdx] !== null) return; 
+        if (schedule[slotIdx] !== null) return; // Guru ada kelas sendiri
 
         let isEligible = true;
         let reason = "Masa Kosong";
+        // Logik Rehat Wajib: Jika sudah mengajar 2 jam (slot) berturut-turut sebelum ini
         if (slotIdx >= 2 && schedule[slotIdx - 1] && schedule[slotIdx - 2]) {
             isEligible = false;
             reason = "Penat (2 Jam Berturut-turut)";
         }
         results.push({ id: t.id, name: t.name, isEligible, reason });
     });
-    return results.sort((a, b) => b.isEligible - a.isEligible);
+    return results;
 }
+
+// --- H. FUNGSI CETAK ---
+window.printRelief = () => {
+    const printContents = document.getElementById('printableReliefArea').innerHTML;
+    const originalContents = document.body.innerHTML;
+
+    const printStyle = `
+        <style>
+            @media print {
+                .no-print { display: none !important; }
+                body { padding: 20px; font-family: Arial, sans-serif; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { border: 1px solid #333; padding: 12px; text-align: left; }
+                th { background-color: #f2f2f2 !important; -webkit-print-color-adjust: exact; }
+                .status-badge { display: none; } /* Sembunyikan badge status masa cetak untuk kekemasan */
+            }
+        </style>
+    `;
+
+    document.body.innerHTML = printStyle + printContents;
+    window.print();
+    document.body.innerHTML = originalContents;
+    window.location.reload(); // Reload untuk mengaktifkan semula semua event listeners JavaScript
+};
