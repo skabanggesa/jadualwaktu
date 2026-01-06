@@ -36,7 +36,7 @@ const timeMapping = {
     "6": "10:00", "7": "10:30", "8": "11:00", "9": "11:30"
 };
 
-// Keutamaan Role (Semakin rendah nombor, semakin tinggi keutamaan untuk dipilih jadi relief)
+// Keutamaan Jawatan untuk Relief (Angka rendah = diutamakan dahulu)
 const rolePriority = { "GURU": 1, "PK1": 2, "PKHEM": 2, "PKKK": 2, "GB": 3 };
 
 const clean = (str) => (str ? str.trim().replace(/\s+/g, '') : "");
@@ -70,9 +70,9 @@ if (document.getElementById('btnLogout')) {
     };
 }
 
-// --- C. PENGURUSAN DATA MASTER ---
+// --- C. PENGURUSAN DATA MASTER & MIGRASI ---
 
-// 1. SKRIP MIGRASI (Jalankan setiap kali data dimuatkan untuk pastikan semua ada role)
+// Fungsi Migrasi: Menambah role "GURU" kepada data lama yang tiada role
 async function runMigrationIfNeeded(teachers) {
     const batch = writeBatch(db);
     let needsMigration = false;
@@ -84,7 +84,7 @@ async function runMigrationIfNeeded(teachers) {
     });
     if (needsMigration) {
         await batch.commit();
-        console.log("Migrasi Role Selesai.");
+        console.log("Migrasi Role Guru Selesai.");
     }
 }
 
@@ -105,7 +105,7 @@ async function loadAllData() {
         assignmentsList = snapA.docs.map(d => ({ id: d.id, ...d.data() }));
         
         populateDropdowns();
-        populateAbsentChecklist(); // Fungsi baru untuk checklist
+        populateAbsentChecklist(); // Memanggil paparan checklist yang diperbaiki
         renderTeacherTable();
         renderSubjectTable();
     } catch (err) {
@@ -130,7 +130,7 @@ document.getElementById('btnSaveTeacher').onclick = () => {
         setDoc(doc(db, "teachers", clean(id)), { 
             name, 
             shortform: short, 
-            role: role,
+            role: role, // Menyimpan jawatan guru
             canRelief: true 
         })
         .then(() => { 
@@ -236,15 +236,38 @@ function populateDropdowns() {
     fill('viewClassSelect', classesList, "Kelas", true);
 }
 
+/**
+ * PENAMBAHBAIKAN: Paparan Checklist Guru Tidak Hadir yang lebih kemas
+ */
 function populateAbsentChecklist() {
     const container = document.getElementById('absentTeacherChecklist');
     if (!container) return;
-    if (teachersList.length === 0) return;
+    
+    // Gaya container untuk grid yang kemas
+    container.style.display = "grid";
+    container.style.gridTemplateColumns = "repeat(auto-fill, minmax(220px, 1fr))";
+    container.style.gap = "10px";
+    container.style.padding = "15px";
+    container.style.backgroundColor = "#f8fafc";
+    container.style.border = "1px solid #e2e8f0";
+    container.style.borderRadius = "8px";
+    container.style.maxHeight = "300px";
+    container.style.overflowY = "auto";
+
+    if (teachersList.length === 0) {
+        container.innerHTML = "<p>Tiada data guru.</p>";
+        return;
+    }
 
     container.innerHTML = teachersList.map(t => `
-        <label class="checklist-item">
-            <input type="checkbox" class="absent-check" value="${t.id}">
-            <span>${t.name} (${t.id}) - <small>${t.role || 'GURU'}</small></span>
+        <label style="display: flex; align-items: center; padding: 10px; background: white; border: 1px solid #cbd5e1; border-radius: 6px; cursor: pointer; transition: all 0.2s ease;"
+               onmouseover="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.05)';"
+               onmouseout="this.style.borderColor='#cbd5e1'; this.style.boxShadow='none';">
+            <input type="checkbox" class="absent-check" value="${t.id}" style="width: 18px; height: 18px; margin-right: 12px; cursor: pointer;">
+            <div style="display: flex; flex-direction: column; overflow: hidden;">
+                <span style="font-weight: 600; font-size: 0.9rem; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">${t.name}</span>
+                <span style="font-size: 0.75rem; color: #64748b;">${t.id} • ${t.role || 'GURU'}</span>
+            </div>
         </label>
     `).join('');
 }
@@ -288,11 +311,11 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     const absentTeacherIds = Array.from(checkedBoxes).map(cb => cb.value);
     const reliefDateVal = document.getElementById('reliefDate').value;
 
-    if (absentTeacherIds.length === 0 || !reliefDateVal) return alert("Pilih tarikh dan guru tidak hadir.");
+    if (absentTeacherIds.length === 0 || !reliefDateVal) return alert("Pilih tarikh dan sekurang-kurangnya seorang guru.");
 
     const selectedDay = ["Ahad", "Isnin", "Selasa", "Rabu", "Khamis", "Jumaat", "Sabtu"][new Date(reliefDateVal).getDay()];
     const resultArea = document.getElementById('reliefResultArea');
-    resultArea.innerHTML = "⏳ Menjana...";
+    resultArea.innerHTML = "⏳ Menjana agihan relief...";
 
     const snap = await getDocs(collection(db, "timetables"));
     const allTimetables = {};
@@ -324,11 +347,10 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
     });
 
     if (allSlotsToReplace.length === 0) {
-        resultArea.innerHTML = `<p style="text-align:center; color:orange;">Tiada kelas untuk diganti.</p>`;
+        resultArea.innerHTML = `<p style="text-align:center; color:orange; padding:20px;">Tiada kelas untuk diganti pada tarikh tersebut.</p>`;
         return;
     }
 
-    // Susun slot mengikut waktu (1, 2, 3...)
     allSlotsToReplace.sort((a,b) => a.slotIndex - b.slotIndex);
 
     let tableRows = "";
@@ -336,7 +358,7 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         let candidates = findEligibleRelief(item.slotIndex, selectedDay, teacherSchedules)
                         .filter(c => !absentTeacherIds.includes(c.id));
         
-        // SUSUN CALON: 1. Kelayakan rehat, 2. Role (Guru dulu), 3. Beban semasa
+        // Logik Susunan Calon: 1. Elak 3 jam berturut, 2. Ikut Role Priority, 3. Beban sedia ada
         candidates.sort((a,b) => {
             if (b.isEligible !== a.isEligible) return b.isEligible - a.isEligible;
             const pA = rolePriority[a.role] || 1;
@@ -349,22 +371,22 @@ document.getElementById('btnIdentifyRelief').onclick = async () => {
         if (selected) dailyReliefCount[selected.id]++;
 
         tableRows += `<tr>
-            <td style="border:1px solid #000; text-align:center; padding:5px;">${timeMapping[item.slotKey]}</td>
+            <td style="border:1px solid #000; text-align:center; padding:5px;">${timeMapping[item.slotKey] || item.slotKey}</td>
             <td style="border:1px solid #000; text-align:center; padding:5px;">${item.classId}</td>
-            <td style="border:1px solid #000; padding:5px;">${item.subject}<br><small>(${item.absentName})</small></td>
+            <td style="border:1px solid #000; padding:5px;">${item.subject}<br><small style="color:#666;">(Asal: ${item.absentName})</small></td>
             <td style="border:1px solid #000; padding:5px;">${selected ? `<b>${selected.name}</b><br><small style="color:blue;">${selected.role} - ${selected.reason}</small>` : '<span style="color:red;">TIADA GURU</span>'}</td>
         </tr>`;
     });
 
     resultArea.innerHTML = `
-        <div class="relief-print-wrapper" style="padding:20px; background:#fff; border:1px solid #ccc;">
+        <div class="relief-print-wrapper" style="padding:20px; background:#fff; border:1px solid #ccc; margin-top:20px;">
             <h2 style="text-align:center; margin:0;">SLIP GURU GANTI (RELIEF)</h2>
             <p style="text-align:center; margin-bottom:15px;">Tarikh: ${reliefDateVal} (${selectedDay.toUpperCase()})</p>
             <table style="width:100%; border-collapse:collapse;">
-                <thead><tr style="background:#eee;"><th style="border:1px solid #000; width:80px;">Waktu</th><th style="border:1px solid #000; width:70px;">Kelas</th><th style="border:1px solid #000;">Subjek / Asal</th><th style="border:1px solid #000;">Guru Ganti</th></tr></thead>
+                <thead><tr style="background:#eee;"><th style="border:1px solid #000; width:80px;">Waktu</th><th style="border:1px solid #000; width:70px;">Kelas</th><th style="border:1px solid #000;">Subjek</th><th style="border:1px solid #000;">Guru Ganti</th></tr></thead>
                 <tbody>${tableRows}</tbody>
             </table>
-            <button onclick="window.print()" class="btn-success no-print" style="margin-top:15px; width:100%; padding:10px;">🖨️ Cetak Slip</button>
+            <button onclick="window.print()" class="btn-success no-print" style="margin-top:15px; width:100%; padding:10px; cursor:pointer;">🖨️ Cetak Slip Relief</button>
         </div>`;
 };
 
@@ -379,7 +401,7 @@ function mapSchedulesByTeacher(allTimetables) {
             if (dayData) {
                 Object.entries(dayData).forEach(([slotKey, slot]) => {
                     slot.teacherId.split('/').forEach(tId => {
-                        if (map[tId]) map[tId][day][parseInt(slotKey)-1] = { classId };
+                        if (map[tId] && map[tId][day]) map[tId][day][parseInt(slotKey)-1] = { classId };
                     });
                 });
             }
@@ -393,6 +415,7 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     teachersList.forEach(t => {
         const schedule = teacherSchedules[t.id]?.[day];
         if (!schedule || schedule[slotIdx] !== null) return;
+        // Syarat: Guru tidak boleh mengajar lebih 3 jam (6 slot) berturut-turut
         let isEligible = !(slotIdx >= 2 && schedule[slotIdx-1] && schedule[slotIdx-2]);
         results.push({ 
             id: t.id, name: t.name, role: t.role || "GURU", isEligible, 
