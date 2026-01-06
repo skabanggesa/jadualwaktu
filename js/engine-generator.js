@@ -1,11 +1,16 @@
+/**
+ * SISTEM PENGURUSAN JADUAL WAKTU (ASG VER 1.0)
+ * Fail: engine-generator.js
+ * Kemaskini: Sokongan 10 Slot Tahap 2
+ */
+
 import { db } from "./firebase-config.js";
 import { collection, getDocs, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const DAYS = ["Isnin", "Selasa", "Rabu", "Khamis", "Jumaat"];
-const MAX_SLOTS = { "Isnin": 9, "Selasa": 9, "Rabu": 9, "Khamis": 9, "Jumaat": 8 };
 
 let teachers = [], assignments = [], classesList = [];
-let timetableResult = {}, teacherDailyLoad = {};
+let timetableResult = {}; 
 
 const shuffle = (array) => {
     let currentIndex = array.length, randomIndex;
@@ -17,10 +22,21 @@ const shuffle = (array) => {
     return array;
 };
 
+// Fungsi untuk menentukan had slot secara dinamik
+function getMaxSlots(day, classId) {
+    const isTahap2 = ["4", "5", "6"].includes(classId.charAt(0));
+    
+    if (day === "Jumaat") return 8; // Semua tahap tamat 11:30
+    if (day === "Khamis") return 9; // Semua tahap tamat 12:00
+    
+    // Isnin, Selasa, Rabu
+    if (isTahap2) return 10; // Tahap 2 tamat 12:30
+    return 9; // Tahap 1 tamat 12:00
+}
+
 export async function startGenerating() {
-    console.log("Menjana Jadual: Memperbaiki Slot 6 & PJ...");
+    console.log("Menjana Jadual: Mengira slot Tahap 1 & 2...");
     timetableResult = {}; 
-    teacherDailyLoad = {};
     
     try {
         await fetchData();
@@ -34,7 +50,7 @@ export async function startGenerating() {
             let bestGrid = null;
             let minLeftover = 999;
 
-            while (!isComplete && attempts < 10) {
+            while (!isComplete && attempts < 15) {
                 attempts++;
                 const tempGrid = await generateClassGrid(cls.id, JSON.parse(JSON.stringify(classAssigns)));
                 const currentLeftover = classAssigns.reduce((sum, a) => sum + (a.left || 0), 0);
@@ -50,7 +66,7 @@ export async function startGenerating() {
             if (!isComplete) timetableResult[cls.id] = bestGrid;
         }
         await saveToCloud();
-        alert("Jadual Berjaya Dijana! Slot 6 kini diisi dan PJ telah diutamakan.");
+        alert("Jadual Berjaya Dijana termasuk Slot 10 untuk Tahap 2!");
     } catch (e) { console.error(e); }
 }
 
@@ -68,8 +84,9 @@ async function fetchData() {
 function prepareAssignments(assigns) {
     const grouped = {};
     assigns.forEach(a => {
-        if (!grouped[a.subjectId]) grouped[a.subjectId] = { ...a };
-        else if (!grouped[a.subjectId].teacherId.includes(a.teacherId)) {
+        if (!grouped[a.subjectId]) {
+            grouped[a.subjectId] = { ...a, left: parseInt(a.periods || a.totalSlots || 0) };
+        } else if (!grouped[a.subjectId].teacherId.includes(a.teacherId)) {
             grouped[a.subjectId].teacherId += `/${a.teacherId}`;
         }
     });
@@ -79,12 +96,11 @@ function prepareAssignments(assigns) {
 async function generateClassGrid(classId, classAssigns) {
     const grid = {};
     DAYS.forEach(d => grid[d] = {});
+    
     // Perhimpunan tetap slot 1 Rabu
     grid["Rabu"][1] = { subjectId: "PERHIMPUNAN", teacherId: "SEMUA" };
 
-    classAssigns.forEach(a => a.left = parseInt(a.periods || a.totalSlots || 0));
-
-    // Fasa 1: Subjek Utama + PJ
+    // Fasa 1: Subjek Utama + PJ (Priority)
     const corePriority = ["BM", "BI", "MT", "SN", "PJ"]; 
     const coreTasks = classAssigns.filter(t => corePriority.some(p => t.subjectId.toUpperCase().includes(p)));
     const otherTasks = classAssigns.filter(t => !corePriority.some(p => t.subjectId.toUpperCase().includes(p)));
@@ -99,7 +115,7 @@ function fillTasksToGrid(grid, taskQueue, classId, relax) {
     taskQueue.sort((a, b) => (b.isDouble ? 1 : 0) - (a.isDouble ? 1 : 0));
 
     let safety = 0;
-    while (taskQueue.some(a => a.left > 0) && safety < 50) {
+    while (taskQueue.some(a => a.left > 0) && safety < 60) {
         safety++;
         for (let day of shuffle([...DAYS])) {
             for (let a of taskQueue) {
@@ -107,10 +123,10 @@ function fillTasksToGrid(grid, taskQueue, classId, relax) {
 
                 let size = (a.isDouble && a.left >= 2) ? 2 : 1;
                 
-                // Cuba ikut kekangan (PJ pagi)
+                // Cuba ikut kekangan (PJ pagi dsb)
                 let slot = findSlot(grid[day], day, size, a.teacherId, classId, a.subjectId, false);
 
-                // Jika gagal (terutama PJ), cuba tanpa had pagi
+                // Jika gagal, cuba tanpa had pagi (ignoreStrict)
                 if (slot === -1) {
                     slot = findSlot(grid[day], day, size, a.teacherId, classId, a.subjectId, true);
                 }
@@ -118,7 +134,6 @@ function fillTasksToGrid(grid, taskQueue, classId, relax) {
                 if (slot !== -1) {
                     for (let i = 0; i < size; i++) {
                         grid[day][slot + i] = { subjectId: a.subjectId, teacherId: a.teacherId };
-                        updateTeacherLoad(a.teacherId, day, 1);
                     }
                     a.left -= size;
                 }
@@ -128,7 +143,7 @@ function fillTasksToGrid(grid, taskQueue, classId, relax) {
 }
 
 function findSlot(dayGrid, day, size, tId, cId, sId, ignoreStrict) {
-    let max = MAX_SLOTS[day];
+    let max = getMaxSlots(day, cId);
     
     // Syarat PJ: Cuba slot 1-5 dahulu jika tidak 'ignoreStrict'
     if (!ignoreStrict && sId && sId.toUpperCase().includes("PJ")) {
@@ -136,8 +151,7 @@ function findSlot(dayGrid, day, size, tId, cId, sId, ignoreStrict) {
     }
 
     for (let s = 1; s <= max - (size - 1); s++) {
-        // PEMBETULAN: Slot 6 kini dibenarkan. 
-        // Hanya sekat jika subjek bermula di slot 5 tetapi saiz 2 (bertembung Rehat)
+        // Jangan langgar waktu rehat (Slot 5 & 6)
         if (s === 5 && size > 1) continue; 
 
         let free = true;
@@ -162,14 +176,6 @@ function isTeacherFree(tId, day, slot) {
         }
     }
     return true;
-}
-
-function updateTeacherLoad(tId, day, count) {
-    if (tId === "SEMUA") return;
-    tId.split('/').forEach(id => {
-        if (!teacherDailyLoad[id]) teacherDailyLoad[id] = {};
-        teacherDailyLoad[id][day] = (teacherDailyLoad[id][day] || 0) + count;
-    });
 }
 
 async function saveToCloud() {
