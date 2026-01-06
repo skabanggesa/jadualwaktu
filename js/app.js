@@ -9,19 +9,48 @@ import {
     doc, 
     setDoc, 
     getDocs, 
+    updateDoc, // <--- TAMBAH INI
     deleteDoc,
     writeBatch,
     serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-import { 
-    getAuth, 
-    onAuthStateChanged, 
-    signOut, 
-    signInWithEmailAndPassword 
-} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+// ... (import lain kekal sama) ...
 import { startGenerating } from "./engine-generator.js";
-// Pastikan getCurrentTimetableData diimport untuk fungsi Simpan Manual
 import { renderTimetableGrid, getCurrentTimetableData } from "./ui-render.js";
+
+// ==========================================
+// 1. SKRIP MIGRASI (Jalankan Sekali Sahaja)
+// ==========================================
+async function migrateTeacherRoles() {
+    console.log("Menyemak keperluan migrasi role guru...");
+    try {
+        const querySnapshot = await getDocs(collection(db, "teachers"));
+        let count = 0;
+
+        for (const teacherDoc of querySnapshot.docs) {
+            const data = teacherDoc.data();
+            
+            // Hanya kemaskini jika medan 'role' belum wujud
+            if (!data.role) {
+                await updateDoc(doc(db, "teachers", teacherDoc.id), {
+                    role: "GURU" 
+                });
+                count++;
+            }
+        }
+        if (count > 0) {
+            console.log(`Migrasi Selesai! ${count} guru dikemaskini.`);
+            alert(`Berjaya! ${count} data guru telah ditambah medan 'role: GURU'.`);
+        }
+    } catch (error) {
+        console.error("Ralat migrasi:", error);
+    }
+}
+
+// Panggil fungsi migrasi
+migrateTeacherRoles();
+// ==========================================
 
 // --- A. PEMUBAH UBAH GLOBAL & MAPPING ---
 const auth = getAuth();
@@ -447,3 +476,4 @@ function findEligibleRelief(slotIdx, day, teacherSchedules) {
     });
     return results;
 }
+
