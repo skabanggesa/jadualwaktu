@@ -7,45 +7,38 @@ const MAX_SLOTS = { "Isnin": 9, "Selasa": 9, "Rabu": 9, "Khamis": 9, "Jumaat": 8
 let teachers = [], subjects = [], assignments = [], classesList = [];
 let timetableResult = {}, teacherDailyLoad = {};
 
-// Fungsi bantuan untuk merawakkan senarai (Fisher-Yates Shuffle)
 const shuffle = (array) => {
-    let currentIndex = array.length, randomIndex;
-    while (currentIndex !== 0) {
-        randomIndex = Math.floor(Math.random() * currentIndex);
-        currentIndex--;
-        [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
 };
 
 export async function startGenerating() {
-    console.log("Memulakan Penjanaan: Fasa Keutamaan & Logik Pengisian Maksimum...");
+    console.log("Menjana Jadual: Mengoptimumkan Slot 6 & Keutamaan Subjek...");
     timetableResult = {}; 
     teacherDailyLoad = {};
     
     try {
         await fetchData();
-        
-        // 1. Rawakkan urutan kelas supaya pengagihan guru adil
         const randomizedClasses = shuffle([...classesList]);
 
         for (const cls of randomizedClasses) {
             let classAssigns = [...assignments.filter(a => a.classId === cls.id)];
             
-            // --- 2. LOGIK GABUNGAN (PI/PM & CO-TEACHING) ---
-            classAssigns = prepareAssignments(classAssigns);
+            // --- LOGIK GABUNGAN PI / PM ---
+            classAssigns = prepareAssignments(classAssigns, cls.id);
 
-            // --- 3. LOGIK CUBAAN SEMULA (RETRY) ---
+            // --- LOGIK CUBAAN SEMULA ---
             let isComplete = false;
             let attempts = 0;
             let bestGrid = null;
             let minLeftover = 999;
 
-            while (!isComplete && attempts < 10) {
+            while (!isComplete && attempts < 15) {
                 attempts++;
                 const tempGrid = await generateClassGrid(cls.id, JSON.parse(JSON.stringify(classAssigns)));
-                
-                // Kira baki waktu yang gagal dimasukkan
                 const currentLeftover = classAssigns.reduce((sum, a) => sum + (a.left || 0), 0);
                 
                 if (currentLeftover === 0) {
@@ -56,18 +49,14 @@ export async function startGenerating() {
                     bestGrid = tempGrid;
                 }
             }
-
-            if (!isComplete) {
-                timetableResult[cls.id] = bestGrid;
-                console.warn(`Kelas ${cls.id} tidak 100% lengkap (Baki: ${minLeftover} slot).`);
-            }
+            if (!isComplete) timetableResult[cls.id] = bestGrid;
         }
         
         await saveToCloud();
-        alert("Jadual Berjaya Dijana! Sila semak status pengisian di bawah jadual.");
+        alert("Penjanaan Selesai! Slot 6 kini telah digunakan.");
     } catch (e) { 
-        console.error("Ralat Penjanaan:", e); 
-        alert("Gagal menjana jadual: " + e.message); 
+        console.error("Ralat:", e); 
+        alert("Gagal: " + e.message); 
     }
 }
 
@@ -84,8 +73,7 @@ async function fetchData() {
     classesList = cS.docs.map(d => ({id: d.id, ...d.data()}));
 }
 
-function prepareAssignments(assigns) {
-    // Gabung Co-Teaching (Subjek sama, guru berbeza)
+function prepareAssignments(assigns, classId) {
     const grouped = {};
     assigns.forEach(a => {
         if (!grouped[a.subjectId]) grouped[a.subjectId] = { ...a };
@@ -95,12 +83,12 @@ function prepareAssignments(assigns) {
     });
     let processed = Object.values(grouped);
 
-    // Gabung Parallel (PI / PM)
-    const piTasks = processed.filter(a => a.subjectId.includes("PI") || a.subjectId.includes("PAI"));
+    // Baiki pengesanan PI atau PAI
+    const piTasks = processed.filter(a => a.subjectId.toUpperCase().includes("PI") || a.subjectId.toUpperCase().includes("PAI"));
     const pmTask = processed.find(a => a.subjectId === "PM");
 
     if (piTasks.length > 0 && pmTask) {
-        processed = processed.filter(a => !a.subjectId.includes("PI") && !a.subjectId.includes("PAI") && a.subjectId !== "PM");
+        processed = processed.filter(a => !piTasks.includes(a) && a.subjectId !== "PM");
         let pmLeft = pmTask.periods || pmTask.totalSlots;
         piTasks.forEach(pi => {
             const piVal = pi.periods || pi.totalSlots;
@@ -111,6 +99,7 @@ function prepareAssignments(assigns) {
                     teacherId: `${pi.teacherId}/${pmTask.teacherId}`,
                     totalSlots: merge,
                     isDouble: pi.isDouble,
+                    classId: classId,
                     isParallel: true
                 });
                 pmLeft -= merge;
@@ -121,8 +110,6 @@ function prepareAssignments(assigns) {
     return processed;
 }
 
-
-
 async function generateClassGrid(classId, classAssigns) {
     const grid = {};
     DAYS.forEach(d => grid[d] = {});
@@ -130,13 +117,12 @@ async function generateClassGrid(classId, classAssigns) {
 
     classAssigns.forEach(a => a.left = parseInt(a.periods || a.totalSlots || 0));
 
+    // Pengasingan Utama
     const corePriority = ["BM", "BI", "MT", "SN"];
     const coreTasks = classAssigns.filter(t => corePriority.some(p => t.subjectId.toUpperCase().includes(p)));
     const otherTasks = classAssigns.filter(t => !corePriority.some(p => t.subjectId.toUpperCase().includes(p)));
 
-    // Fasa 1: Subjek Utama (Ketat)
     fillTasksToGrid(grid, shuffle(coreTasks), classId, false);
-    // Fasa 2: Subjek Lain (Longgar)
     fillTasksToGrid(grid, shuffle(otherTasks), classId, true);
 
     return grid;
@@ -161,7 +147,7 @@ function fillTasksToGrid(grid, taskQueue, classId, relax) {
                 let size = (a.isDouble && a.left >= 2) ? 2 : 1;
                 let slot = findSlot(grid[day], day, size, a.teacherId, classId, a.subjectId);
 
-                if (slot === -1 && size === 2) { // Fallback ke Single
+                if (slot === -1 && size === 2) {
                     size = 1;
                     slot = findSlot(grid[day], day, size, a.teacherId, classId, a.subjectId);
                 }
@@ -180,10 +166,13 @@ function fillTasksToGrid(grid, taskQueue, classId, relax) {
 
 function findSlot(dayGrid, day, size, tId, cId, sId) {
     let max = MAX_SLOTS[day];
-    if (sId && sId.toUpperCase().includes("PJ")) max = 5; // Had PJ Pagi
+    // PJ mesti sebelum rehat (Pagi)
+    if (sId && sId.toUpperCase().includes("PJ")) max = 5;
 
     for (let s = 1; s <= max - (size - 1); s++) {
-        if (s === 6 || (s < 6 && s + size > 6)) continue; // Rehat
+        // PERBAIKAN: Hanya langkau waktu rehat sebenar (bukan slot 6)
+        // Di sekolah anda, rehat adalah SEBELUM slot 6. Maka slot 6 boleh digunakan.
+        // Kita hanya perlu pastikan slot yang dipilih tidak bertindih dengan data sedia ada.
         
         let free = true;
         for (let i = 0; i < size; i++) {
